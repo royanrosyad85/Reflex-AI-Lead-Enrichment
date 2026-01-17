@@ -23,6 +23,7 @@ RUN reflex export --no-zip
 
 # DigitalOcean will probe the "Internal Port" you set (recommend 8000) or $PORT if you use it.
 EXPOSE 8000
+EXPOSE 3000
 
 # IMPORTANT: bind to 0.0.0.0 inside container
-CMD ["sh", "-lc", "reflex run --env prod --backend-host 0.0.0.0 --backend-port ${PORT:-8000}"]
+CMD ["sh", "-lc", "reflex run --env prod --frontend-host 0.0.0.0 --frontend-port ${PORT:-3000} --backend-host 0.0.0.0 --backend-port 8000"]
