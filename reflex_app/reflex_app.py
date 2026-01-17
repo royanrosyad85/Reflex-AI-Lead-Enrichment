@@ -20,6 +20,13 @@ def sidebar():
         State.sidebar_open,
         rx.box(
             rx.vstack(
+                rx.image(
+                    src="/zurich-logo-update.png",
+                    alt="Zurich Logo",
+                    height="50px",
+                    width="auto",
+                    margin_bottom="1rem",
+                ),
                 rx.heading("Project Overview", size="5", margin_bottom="1rem"),
                 rx.text(
                     "Agentic LangGraph Researcher",
@@ -35,12 +42,6 @@ def sidebar():
                 rx.text("Powered by LangGraph & Tavily", size="1"),
                 rx.divider(margin_y="1rem"),
                 rx.heading("Research Logs", size="3"),
-                rx.input(
-                    value=State.log_query,
-                    on_change=State.set_log_query,
-                    placeholder="Search logs...",
-                    width="100%",
-                ),
                 rx.hstack(
                     rx.button(
                         "Clear Search",
@@ -74,6 +75,7 @@ def sidebar():
                         spacing="2",
                         width="100%",
                     ),
+                    id="research-log-box",
                     width="100%",
                     padding="0.75rem",
                     border="1px solid",
@@ -81,7 +83,8 @@ def sidebar():
                     border_radius="md",
                     background=rx.color("gray", 1),
                     overflow_y="auto",
-                    max_height="45vh",
+                    min_height="50vh",
+                    max_height="60vh",
                 ),
                 align_items="start",
                 spacing="4",
@@ -90,7 +93,7 @@ def sidebar():
             ),
             padding="2rem",
             height="100vh",
-            width="300px",
+            width="340px",
             display=["none", "none", "block"],
         ),
         rx.box(width="0"),  
@@ -144,17 +147,7 @@ def main_content():
             rx.hstack(
                 rx.heading("👾 AI Lead Enrichment", size="7"),
                 rx.spacer(),
-                rx.hstack(
-                    dark_mode_toggle(),
-                    rx.image(
-                        src="/zurich-logo-update.png",
-                        alt="Zurich Logo",
-                        height="36px",
-                        width="auto",
-                    ),
-                    spacing="3",
-                    align_items="center",
-                ),
+                dark_mode_toggle(),
                 width="100%",
                 align_items="center",
             ),
