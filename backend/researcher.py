@@ -136,6 +136,39 @@ class ResearchPipeline:
                 logger.error(f"Search failed for query '{query}': {e}")
 
         return "\n\n".join(aggregrated_content)
+
+    async def perform_search_stream(self, queries: List[str]):
+        """Perform Tavily search and stream log messages."""
+        aggregrated_content = []
+
+        # Deduplicate queries
+        unique_queries = list(set(queries))
+
+        # Limit to 5 queries
+        for query in unique_queries[:5]:
+            yield ("log", f"Searching: {query}")
+            try:
+                result = await asyncio.to_thread(
+                    self.tavily.search,
+                    query=query,
+                    search_depth="basic",
+                    max_results=3,
+                    include_raw_content=False,
+                    include_answer=True
+                )
+                for res in result.get("results", []):
+                    snippet = res.get("content") or res.get("snippet", "")
+                    aggregrated_content.append(
+                        f"Source: {res.get('url')}\nContent: {snippet[:500]}"
+                    )
+                yield (
+                    "log",
+                    f"Search completed: {query} ({len(result.get('results', []))} results)",
+                )
+            except Exception as e:
+                yield ("log", f"Search failed for query '{query}': {e}")
+
+        yield ("result", "\n\n".join(aggregrated_content))
    
     async def extract_and_evaluate(self, company_name: str, content: str, current_fields: Dict[str, EnrichmentField]) -> Dict[str, EnrichmentField]:
         """Extract information from search tool content and update fields."""
@@ -240,3 +273,73 @@ class ResearchPipeline:
                 state.fields[f].rounds_taken += 1
 
         return state
+
+    async def run_research_stream(
+        self, company_name: str, max_global_rounds: int = 3
+    ):
+        fields = {k: EnrichmentField() for k in ENRICHMENT_SCHEMA.keys()}
+        state = CompanyProfileState(company_name=company_name, fields=fields)
+
+        log_message = "Starting research"
+        state.iteration_logs.append(log_message)
+        yield ("log", log_message)
+
+        for round_num in range(1, max_global_rounds + 1):
+            log_message = f"Starting search round {round_num}"
+            state.iteration_logs.append(log_message)
+            yield ("log", log_message)
+
+            # Identify missing fields
+            missing_fields = [
+                k for k, v in state.fields.items()
+                if (v.value == "Tidak Tersedia" or v.confidence == "Low")
+                and v.rounds_taken < ENRICHMENT_SCHEMA[k]["max_rounds"]
+            ]
+            if not missing_fields:
+                log_message = "All fields enriched"
+                state.iteration_logs.append(log_message)
+                yield ("log", log_message)
+                break
+
+            log_message = f"Looking for: {', '.join(missing_fields)}"
+            state.iteration_logs.append(log_message)
+            yield ("log", log_message)
+
+            # Generate Queries
+            log_message = "Generating search queries"
+            state.iteration_logs.append(log_message)
+            yield ("log", log_message)
+            queries = await self.generate_subqueries(company_name, missing_fields, round_num)
+            log_message = f"Generated queries: {queries}"
+            state.iteration_logs.append(log_message)
+            yield ("log", log_message)
+
+            # Perform Search
+            content = ""
+            async for event_type, payload in self.perform_search_stream(queries):
+                if event_type == "log":
+                    state.iteration_logs.append(payload)
+                    yield ("log", payload)
+                elif event_type == "result":
+                    content = payload
+
+            if not content or content == "No search results available":
+                log_message = "No new information found in search."
+                state.iteration_logs.append(log_message)
+                yield ("log", log_message)
+                continue
+
+            # Extract and Evaluate
+            log_message = "Extracting data from search results"
+            state.iteration_logs.append(log_message)
+            yield ("log", log_message)
+            state.fields = await self.extract_and_evaluate(company_name, content, state.fields)
+            log_message = f"Extraction round {round_num} completed"
+            state.iteration_logs.append(log_message)
+            yield ("log", log_message)
+
+            # Update rounds count for checked fields
+            for f in missing_fields:
+                state.fields[f].rounds_taken += 1
+
+        yield ("result", state)
