@@ -74,8 +74,9 @@ def sidebar():
                         align_items="start",
                         spacing="2",
                         width="100%",
+                        id="log-content",
                     ),
-                    id="research-log-box",
+                    id="log-viewer",
                     width="100%",
                     padding="0.75rem",
                     border="1px solid",
@@ -85,6 +86,22 @@ def sidebar():
                     overflow_y="auto",
                     min_height="50vh",
                     max_height="60vh",
+                    on_mount=rx.call_script(
+                        """
+                        const logViewer = document.getElementById('log-viewer');
+                        const logContent = document.getElementById('log-content');
+                        if (logViewer && logContent) {
+                            const observer = new MutationObserver(() => {
+                                logViewer.scrollTop = logViewer.scrollHeight;
+                            });
+                            observer.observe(logContent, {
+                                childList: true,
+                                subtree: true,
+                                characterData: true
+                            });
+                        }
+                        """
+                    ),
                 ),
                 align_items="start",
                 spacing="4",
