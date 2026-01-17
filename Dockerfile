@@ -21,10 +21,9 @@ COPY . .
 RUN reflex init
 RUN reflex export --no-zip
 
-# Expose ports
+# Expose port (frontend akan proxy ke backend internally)
 EXPOSE 3000
-EXPOSE 8000
 
-# IMPORTANT: Reflex 0.8.25 binds to 0.0.0.0 by default for both frontend & backend
-# Frontend pada $PORT (default 3000), Backend pada 8000
-CMD ["sh", "-lc", "reflex run --env prod --frontend-port ${PORT:-3000} --backend-host 0.0.0.0 --backend-port 8000"]
+# IMPORTANT: Run BOTH frontend & backend on SAME port (3000)
+# Reflex akan auto-handle WebSocket routing ke backend
+CMD ["sh", "-lc", "reflex run --env prod --frontend-port ${PORT:-3000} --backend-host 0.0.0.0 --backend-port ${PORT:-3000}"]
