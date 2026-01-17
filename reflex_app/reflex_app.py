@@ -277,11 +277,5 @@ def index():
     )
 
 
-app = rx.App(
-    theme=rx.theme(
-        has_background=True,
-        radius="small",
-        accent_color="violet"
-    )
-)
+app = rx.App()
 app.add_page(index, title="AI Lead Enrichment", image="zurich-logo-update.png")
