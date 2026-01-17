@@ -14,20 +14,36 @@ from backend.researcher import ResearchPipeline
 
 load_dotenv()
 
-class State(rx.State):
 
-    companies: List[Dict[str, str]] = [
-        {"Nama Perusahaan": "", "Sektor Perusahaan": "", "Alamat": "", "Kontak": "",
-         "Potensi Polis": "", "Jumlah Karyawan": "", "Short Description": "",
-         "Kantor Cabang": "", "PIC Perusahaan": "", "Laporan Keuangan": ""}
+def _default_companies() -> List[Dict[str, str]]:
+    return [
+        {
+            "Nama Perusahaan": "",
+            "Sektor Perusahaan": "",
+            "Alamat": "",
+            "Kontak": "",
+            "Potensi Polis": "",
+            "Jumlah Karyawan": "",
+            "Short Description": "",
+            "Kantor Cabang": "",
+            "PIC Perusahaan": "",
+            "Laporan Keuangan": "",
+        }
         for _ in range(5)
     ]
+
+
+class State(rx.State):
+
+    companies: List[Dict[str, str]] = _default_companies()
    
     # UI State
     is_processing: bool = False
     progress: int = 0
     status_log: str = ""
     sidebar_open: bool = True
+    research_logs: List[str] = []
+    log_query: str = ""
    
     def toggle_sidebar(self):
         self.sidebar_open = not self.sidebar_open
@@ -44,17 +60,45 @@ class State(rx.State):
         new_companies[index] = {**new_companies[index], "Nama Perusahaan": value}
         self.companies = new_companies
 
+    def set_log_query(self, value: str):
+        self.log_query = value
+
+    def append_log(self, message: str):
+        self.research_logs = self.research_logs + [message]
+
+    def clear_search(self):
+        self.log_query = ""
+
+    def reset_session_state(self):
+        if self.is_processing:
+            return
+        self.log_query = ""
+        self.research_logs = []
+        self.progress = 0
+        self.status_log = ""
+        self.is_processing = False
+        self.companies = _default_companies()
+
+    @rx.var
+    def filtered_research_logs(self) -> List[str]:
+        query = self.log_query.strip().lower()
+        if not query:
+            return self.research_logs
+        return [entry for entry in self.research_logs if query in entry.lower()]
+
     async def run_enrichment(self):
         # Filter companies that have names
         targets = [(i, c["Nama Perusahaan"]) for i, c in enumerate(self.companies) if c["Nama Perusahaan"].strip()]
        
         if not targets:
             self.status_log = "Please enter at least one company name."
+            self.append_log(self.status_log)
             return
 
         self.is_processing = True
         self.progress = 0
         self.status_log = f"Starting enrichment for {len(targets)} companies..."
+        self.append_log(self.status_log)
         yield
 
         try:
@@ -66,6 +110,7 @@ class State(rx.State):
 
             if not all([tavily_api_key, azure_api_key, azure_endpoint, deployment]):
                 self.status_log = "Error: Missing environment variables."
+                self.append_log(self.status_log)
                 self.is_processing = False
                 yield
                 return
@@ -81,6 +126,7 @@ class State(rx.State):
 
         except Exception as e:
             self.status_log = f"Initialization Error: {str(e)}"
+            self.append_log(self.status_log)
             self.is_processing = False
             yield
             return
@@ -92,11 +138,13 @@ class State(rx.State):
             sektor = current_row.get("Sektor Perusahaan")
             if sektor and isinstance(sektor, str) and sektor.strip():
                 self.status_log = f"Skipping {company_name} (already enriched)..."
+                self.append_log(self.status_log)
                 self.progress = int((idx + 1) / total * 100)
                 yield
                 continue
 
             self.status_log = f"Processing {idx + 1}/{total}: {company_name}..."
+            self.append_log(self.status_log)
             yield
            
             try:
@@ -104,6 +152,9 @@ class State(rx.State):
                 result_state = await pipeline.run_research(company_name)
                 result_dict = result_state.to_dict()
                 fields = result_dict.get("fields", {})
+                iteration_logs = result_dict.get("iteration_logs", [])
+                for entry in iteration_logs:
+                    self.append_log(f"{company_name}: {entry}")
 
                 # Update state - create new list to trigger reactivity
                 new_companies = list(self.companies)
@@ -130,13 +181,17 @@ class State(rx.State):
                
             except Exception as e:
                 self.status_log = f"Error processing {company_name}: {str(e)}"
+                self.append_log(self.status_log)
                 print(f"Error: {e}")
            
             # Update progress
             self.progress = int((idx + 1) / total * 100)
+            if not self.status_log.startswith("Error processing"):
+                self.append_log(f"Completed {company_name}.")
             yield
 
         self.status_log = "Enrichment Completed!"
+        self.append_log(self.status_log)
         self.is_processing = False
         yield
 

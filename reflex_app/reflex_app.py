@@ -33,7 +33,60 @@ def sidebar():
                 ),
                 rx.divider(margin_y="1rem"),
                 rx.text("Powered by LangGraph & Tavily", size="1"),
+                rx.divider(margin_y="1rem"),
+                rx.heading("Research Logs", size="3"),
+                rx.input(
+                    value=State.log_query,
+                    on_change=State.set_log_query,
+                    placeholder="Search logs...",
+                    width="100%",
+                ),
+                rx.hstack(
+                    rx.button(
+                        "Clear Search",
+                        on_click=cast(rx.EventHandler[[]], State.clear_search),
+                        variant="soft",
+                        size="1",
+                        cursor="pointer",
+                    ),
+                    rx.button(
+                        "Reset Session",
+                        on_click=cast(rx.EventHandler[[]], State.reset_session_state),
+                        variant="outline",
+                        size="1",
+                        cursor="pointer",
+                        disabled=State.is_processing,
+                    ),
+                    width="100%",
+                    spacing="2",
+                ),
+                rx.box(
+                    rx.vstack(
+                        rx.foreach(
+                            State.filtered_research_logs,
+                            lambda entry: rx.text(
+                                entry,
+                                size="1",
+                                style={"white-space": "pre-wrap"},
+                            ),
+                        ),
+                        align_items="start",
+                        spacing="2",
+                        width="100%",
+                    ),
+                    width="100%",
+                    padding="0.75rem",
+                    border="1px solid",
+                    border_color=rx.color("gray", 4),
+                    border_radius="md",
+                    background=rx.color("gray", 1),
+                    overflow_y="auto",
+                    max_height="45vh",
+                ),
                 align_items="start",
+                spacing="4",
+                height="100%",
+                width="100%",
             ),
             padding="2rem",
             height="100vh",
@@ -89,42 +142,25 @@ def main_content():
     return rx.box(
         rx.vstack(
             rx.hstack(
-                rx.heading("👾 Lead Enrichment ZGTI", size="7"),
+                rx.heading("👾 AI Lead Enrichment", size="7"),
                 rx.spacer(),
-                dark_mode_toggle(),
+                rx.hstack(
+                    dark_mode_toggle(),
+                    rx.image(
+                        src="/zurich-logo-update.png",
+                        alt="Zurich Logo",
+                        height="36px",
+                        width="auto",
+                    ),
+                    spacing="3",
+                    align_items="center",
+                ),
                 width="100%",
                 align_items="center",
             ),
             rx.text("Input company names below to automatically enrich their profiles."),
 
-            # Action Bar
-            rx.hstack(
-                rx.button(
-                    "Add Row",
-                    on_click=cast(rx.EventHandler[[]], State.add_row),
-                    variant="outline",
-                    cursor="pointer",
-                ),
-                rx.button(
-                    "Start Enrichment",
-                    on_click=cast(rx.EventHandler[[]], State.run_enrichment),
-                    loading=State.is_processing,
-                    color_scheme="jade",
-                    cursor="pointer",
-                ),
-                rx.spacer(),
-                rx.button(
-                    "Export CSV",
-                    on_click=cast(rx.EventHandler[[]], State.export_csv),
-                    variant="soft",
-                    cursor="pointer",
-                    color_mode="light"
-                ),
-                width="100%",
-                padding_y="1rem",
-            ),
-
-            # Progress Section
+            # Progress Section (di atas table)
             rx.cond(
                 State.is_processing,
                 rx.box(
@@ -164,6 +200,34 @@ def main_content():
                 overflow_x="auto",
                 width="100%",
                 border_radius="md",
+            ),
+
+            # ===== NEW: Action Bar PINDAH KE BAWAH =====
+            rx.hstack(
+                rx.button(
+                    "Add Row",
+                    on_click=cast(rx.EventHandler[[]], State.add_row),
+                    variant="outline",
+                    cursor="pointer",
+                ),
+                rx.button(
+                    "Start Enrichment",
+                    on_click=cast(rx.EventHandler[[]], State.run_enrichment),
+                    loading=State.is_processing,
+                    color_scheme="jade",
+                    cursor="pointer",
+                ),
+                rx.spacer(),
+                rx.button(
+                    "Export CSV",
+                    on_click=cast(rx.EventHandler[[]], State.export_csv),
+                    variant="soft",
+                    cursor="pointer",
+                    color_mode="light"
+                ),
+                width="100%",
+                padding_y="1rem",
+                margin_top="1rem",
             ),
 
             align_items="start",
@@ -227,4 +291,4 @@ app = rx.App(
         accent_color="violet"
     )
 )
-app.add_page(index)
+app.add_page(index, title="AI Lead Enrichment", image="zurich-logo-update.png")

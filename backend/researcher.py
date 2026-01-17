@@ -7,6 +7,14 @@ from tavily import TavilyClient
 from openai import AzureOpenAI, AsyncAzureOpenAI
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Setup console handler dengan INFO format jika belum ada
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
 
 @dataclass
 class EnrichmentField:
@@ -192,10 +200,11 @@ class ResearchPipeline:
         state = CompanyProfileState(company_name=company_name, fields=fields)
 
         logger.info(f"Starting research for {company_name}")
+        state.iteration_logs.append(f"INFO:backend.researcher:Starting research for {company_name}")
        
         for round_num in range(1, max_global_rounds + 1):
             logger.info(f"--- Pencarian ke- {round_num} ---")
-            state.iteration_logs.append(f"Starting search round {round_num}")
+            state.iteration_logs.append(f"INFO:backend.researcher:--- Pencarian ke- {round_num} ---")
 
             # Identify missing fields
             missing_fields = [
@@ -205,19 +214,22 @@ class ResearchPipeline:
             ]
             if not missing_fields:
                 logger.info("All fields enriched or max rounds reached.")
-                state.iteration_logs.append("All fields enriched")
+                state.iteration_logs.append("INFO:backend.researcher:All fields enriched or max rounds reached.")
                 break
            
             logger.info(f"Looking for: {', '.join(missing_fields)}")
+            state.iteration_logs.append(f"INFO:backend.researcher:Looking for: {', '.join(missing_fields)}")
 
             # Generate Queries
             queries = await self.generate_subqueries(company_name, missing_fields, round_num)
             logger.info(f"Generated Queries: {queries}")
+            state.iteration_logs.append(f"INFO:backend.researcher:Generated Queries: {queries}")
 
             # Perform Search
             content = await self.perform_search(queries)
-            if not content or content == "No search resuls available":
+            if not content or content == "No search results available":
                 logger.info("No new information found in search.")
+                state.iteration_logs.append("INFO:backend.researcher:No new information found in search.")
                 continue
            
             # Extract and Evaluate
