@@ -148,13 +148,27 @@ class State(rx.State):
             yield
            
             try:
-                # Run research pipeline
-                result_state = await pipeline.run_research(company_name)
+                # Run research pipeline dengan streaming logs real-time
+                result_state = None
+                async for event_type, payload in pipeline.run_research_stream(company_name):
+                    if event_type == "log":
+                        # payload adalah string log message
+                        self.append_log(f"{company_name}: {payload}")
+                        yield
+                    elif event_type == "result":
+                        # payload adalah CompanyProfileState object
+                        result_state = payload
+
+                if result_state is None:
+                    raise ValueError("No result returned from research pipeline.")
+
+                # Ensure result_state is CompanyProfileState type
+                from backend.researcher import CompanyProfileState as CPState
+                if not isinstance(result_state, CPState):
+                    raise ValueError(f"Invalid result type: expected CompanyProfileState, got {type(result_state)}")
+
                 result_dict = result_state.to_dict()
                 fields = result_dict.get("fields", {})
-                iteration_logs = result_dict.get("iteration_logs", [])
-                for entry in iteration_logs:
-                    self.append_log(f"{company_name}: {entry}")
 
                 # Update state - create new list to trigger reactivity
                 new_companies = list(self.companies)
