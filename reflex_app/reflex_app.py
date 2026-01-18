@@ -20,11 +20,23 @@ def sidebar():
         State.sidebar_open,
         rx.box(
             rx.vstack(
-                rx.image(
-                    src="/zurich-logo-update.png",
-                    alt="Zurich Logo",
-                    height="50px",
-                    width="auto",
+                rx.hstack(
+                    rx.image(
+                        src="/zurich-logo-update.png",
+                        alt="Zurich Logo",
+                        height="35px",
+                        width="auto",
+                    ),
+                    rx.spacer(),
+                    rx.button(
+                        rx.icon(tag="x", size=20),
+                        on_click=cast(rx.EventHandler[[]], State.toggle_sidebar),
+                        variant="ghost",
+                        size="2",
+                        display=["flex", "flex", "none"],
+                    ),
+                    width="100%",
+                    align_items="center",
                     margin_bottom="1rem",
                 ),
                 rx.heading("Project Overview", size="5", margin_bottom="1rem"),
@@ -38,9 +50,8 @@ def sidebar():
                     size="2",
                     margin_bottom="1rem",
                 ),
-                rx.divider(margin_y="1rem"),
                 rx.text("Powered by LangGraph & Tavily", size="1"),
-                rx.divider(margin_y="1rem"),
+                rx.divider(margin_y="0.5rem"),
                 rx.heading("Research Logs", size="3"),
                 rx.hstack(
                     rx.button(
@@ -110,8 +121,14 @@ def sidebar():
             ),
             padding="2rem",
             height="100vh",
-            width="340px",
-            display=["none", "none", "block"],
+            width=["100%", "360px", "340px"],
+            display="block",
+            position=["fixed", "fixed", "sticky"],
+            top="0",
+            left="0",
+            z_index="1000",
+            background=rx.color("gray", 1),
+            border_right=f"1px solid {rx.color('gray', 4)}",
         ),
         rx.box(width="0"),  
     )
@@ -254,15 +271,6 @@ def main_content():
 def index():
     return rx.hstack(
         sidebar(),
-        rx.cond(
-            State.sidebar_open,
-            rx.box(
-                width="1px",
-                height="200vh",
-                background=rx.color("gray", 4),
-                display=["none", "none", "block"],
-            ),
-        ),
         rx.box(
             rx.vstack(
                 rx.hstack(
