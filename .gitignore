@@ -7,3 +7,8 @@ assets/external/
 
 .venv/
 .env
+
+*tests/
+*docs/
+*requirements-dev.txt
+*pytest.ini
