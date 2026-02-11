@@ -4,6 +4,162 @@ from reflex.style import set_color_mode, color_mode
 from .state import State
 
 
+def render_query_badge(query: rx.Var[str]) -> rx.Component:
+    """Render a single search query as a badge."""
+    return rx.badge(
+        rx.hstack(
+            rx.icon(tag="search", size=12),
+            rx.text(query, size="1"),
+            spacing="1",
+            align_items="center",
+        ),
+        variant="soft",
+        size="1",
+        radius="full",
+    )
+
+
+def render_source_card(source: rx.Var[dict]) -> rx.Component:
+    """Render a single source as a card with favicon."""
+    return rx.hstack(
+        rx.image(
+            src=source["favicon"],
+            width="16px",
+            height="16px",
+            border_radius="2px",
+        ),
+        rx.text(source["domain"], size="1", weight="medium"),
+        spacing="2",
+        align_items="center",
+        padding="4px 8px",
+        border_radius="6px",
+        background=rx.color("gray", 3),
+        cursor="pointer",
+        _hover={"background": rx.color("gray", 4)},
+    )
+
+
+def render_research_event(event: rx.Var[dict]) -> rx.Component:
+    """Render a single research event in Perplexity style."""
+    return rx.box(
+        rx.match(
+            event["phase"],
+            # Thinking phase - spinner + italic message
+            (
+                "thinking",
+                rx.hstack(
+                    rx.spinner(size="1"),
+                    rx.text(
+                        event["message"],
+                        size="1",
+                        style={"font-style": "italic"},
+                        color=rx.color("gray", 11),
+                    ),
+                    spacing="2",
+                    align_items="center",
+                ),
+            ),
+            # Searching phase - header + query pills
+            (
+                "searching",
+                rx.vstack(
+                    rx.hstack(
+                        rx.text(
+                            "SEARCHING",
+                            size="1",
+                            weight="bold",
+                            color=rx.color("gray", 9),
+                            style={"text-transform": "uppercase", "letter-spacing": "0.05em"},
+                        ),
+                        rx.badge(event["query_count"], variant="soft", size="1", radius="full"),
+                        spacing="2",
+                        align_items="center",
+                    ),
+                    rx.text(
+                        event["queries_preview"],
+                        size="1",
+                        color=rx.color("gray", 10),
+                        style={"word-break": "break-word"},
+                    ),
+                    spacing="2",
+                    align_items="start",
+                    width="100%",
+                ),
+            ),
+            # Reading phase - header with count + source cards grid
+            (
+                "reading",
+                rx.vstack(
+                    rx.hstack(
+                        rx.text(
+                            "READING",
+                            size="1",
+                            weight="bold",
+                            color=rx.color("gray", 9),
+                            style={"text-transform": "uppercase", "letter-spacing": "0.05em"},
+                        ),
+                        rx.badge(
+                            event["source_count"],
+                            variant="solid",
+                            size="1",
+                            radius="full",
+                        ),
+                        spacing="2",
+                        align_items="center",
+                    ),
+                    rx.flex(
+                        rx.text(
+                            event["sources_preview"],
+                            size="1",
+                            color=rx.color("gray", 10),
+                            style={"word-break": "break-word"},
+                        ),
+                        width="100%",
+                    ),
+                    spacing="2",
+                    align_items="start",
+                    width="100%",
+                ),
+            ),
+            # Analyzing phase
+            (
+                "analyzing",
+                rx.hstack(
+                    rx.spinner(size="1"),
+                    rx.text(
+                        event["message"],
+                        size="1",
+                        style={"font-style": "italic"},
+                        color=rx.color("gray", 11),
+                    ),
+                    spacing="2",
+                    align_items="center",
+                ),
+            ),
+            # Complete phase
+            (
+                "complete",
+                rx.hstack(
+                    rx.icon(tag="check_check", size=14, color=rx.color("green", 9)),
+                    rx.text(
+                        event["message"],
+                        size="1",
+                        weight="medium",
+                        color=rx.color("green", 11),
+                    ),
+                    spacing="2",
+                    align_items="center",
+                ),
+            ),
+            # Default fallback
+            rx.text(event["message"], size="1"),
+        ),
+        width="100%",
+        padding_y="6px",
+        border_bottom=f"1px solid {rx.color('gray', 3)}",
+    )
+
+
 def dark_mode_toggle() -> rx.Component:
     return rx.segmented_control.root(
         rx.segmented_control.item(rx.icon(tag="sun", size=20), value="light"),
@@ -74,16 +230,33 @@ def sidebar():
                 ),
                 rx.box(
                     rx.vstack(
-                        rx.foreach(
-                            State.filtered_research_logs,
-                            lambda entry: rx.text(
-                                entry,
-                                size="1",
-                                style={"white-space": "pre-wrap"},
+                        # Show current company being processed
+                        rx.cond(
+                            State.current_company != "",
+                            rx.hstack(
+                                rx.spinner(size="1"),
+                                rx.text(
+                                    State.current_company,
+                                    size="2",
+                                    weight="bold",
+                                ),
+                                spacing="2",
+                                align_items="center",
+                                padding="8px",
+                                background=rx.color("blue", 2),
+                                border_radius="6px",
+                                width="100%",
+                                margin_bottom="8px",
                             ),
+                            rx.fragment(),
+                        ),
+                        # Render structured research events
+                        rx.foreach(
+                            State.filtered_research_events,
+                            render_research_event,
                         ),
                         align_items="start",
-                        spacing="2",
+                        spacing="1",
                         width="100%",
                         id="log-content",
                     ),
