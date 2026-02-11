@@ -9,6 +9,8 @@ A web application built with Reflex that automates the process of enriching comp
 - **Interactive Table Interface**: Easy-to-use web interface for managing company data
 - **CSV Export**: Export enriched data to CSV for further analysis or CRM integration
 - **Progress Tracking**: Real-time status updates during enrichment process
+- **Structured Research Timeline**: Perplexity-style `thinking -> searching -> reading -> complete` events in the sidebar
+- **Deterministic Policy Mapping**: `Potensi Polis` is derived from `guidline.md` rules instead of direct web extraction
 
 ## Tech Stack
 
@@ -28,6 +30,11 @@ A web application built with Reflex that automates the process of enriching comp
 2. Install dependencies:
    ```bash
    pip install -r requirements.txt
+   ```
+
+3. (Optional) Install development dependencies for tests:
+   ```bash
+   pip install -r requirements-dev.txt
    ```
 
 3. Set up environment variables:
@@ -52,6 +59,18 @@ A web application built with Reflex that automates the process of enriching comp
 4. Click "Start Enrichment" to begin the AI-powered research process
 
 5. Export results to CSV when complete
+
+## Research Event Stream Contract
+
+- `event`: structured timeline event used by UI
+- `log`: legacy plain text fallback event
+- `result`: final `CompanyProfileState`
+
+## Running Tests
+
+```bash
+python -m pytest -v
+```
 
 ## Project Structure
 
