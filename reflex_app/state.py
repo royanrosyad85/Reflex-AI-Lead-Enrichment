@@ -43,7 +43,9 @@ class State(rx.State):
     status_log: str = ""
     sidebar_open: bool = True
     research_logs: List[str] = []
+    research_events: List[Dict[str, Any]] = []
     log_query: str = ""
+    current_company: str = ""
    
     def toggle_sidebar(self):
         self.sidebar_open = not self.sidebar_open
@@ -66,6 +68,9 @@ class State(rx.State):
     def append_log(self, message: str):
         self.research_logs = self.research_logs + [message]
 
+    def append_event(self, event: Dict[str, Any]):
+        self.research_events = self.research_events + [event]
+
     def clear_search(self):
         self.log_query = ""
 
@@ -74,8 +79,10 @@ class State(rx.State):
             return
         self.log_query = ""
         self.research_logs = []
+        self.research_events = []
         self.progress = 0
         self.status_log = ""
+        self.current_company = ""
         self.is_processing = False
         self.companies = _default_companies()
 
@@ -85,6 +92,18 @@ class State(rx.State):
         if not query:
             return self.research_logs
         return [entry for entry in self.research_logs if query in entry.lower()]
+
+    @rx.var
+    def filtered_research_events(self) -> List[Dict[str, Any]]:
+        query = self.log_query.strip().lower()
+        if not query:
+            return self.research_events
+        return [
+            e for e in self.research_events
+            if query in str(e.get("message", "")).lower()
+            or any(query in q.lower() for q in e.get("queries", []))
+            or any(query in str(s.get("domain", "")).lower() for s in e.get("sources", []))
+        ]
 
     async def run_enrichment(self):
         # Filter companies that have names
@@ -150,10 +169,15 @@ class State(rx.State):
             try:
                 # Run research pipeline dengan streaming logs real-time
                 result_state = None
+                self.current_company = company_name
                 async for event_type, payload in pipeline.run_research_stream(company_name):
                     if event_type == "log":
                         # payload adalah string log message
                         self.append_log(f"{company_name}: {payload}")
+                        yield
+                    elif event_type == "event":
+                        # payload adalah structured research event dict
+                        self.append_event(payload)
                         yield
                     elif event_type == "result":
                         # payload adalah CompanyProfileState object
