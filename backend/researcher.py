@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from tavily import TavilyClient
 from openai import AzureOpenAI, AsyncAzureOpenAI
+from backend.guideline_policy import infer_potensi_polis
+from backend.research_events import thinking_event, searching_event, reading_event, analyzing_event, complete_event
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -50,8 +52,8 @@ ENRICHMENT_SCHEMA = {
         "max_rounds": 2
     },
     "Potensi Polis": {
-        "desc": "Klasifikasi kebutuhan asuransi berdasarkan Short Description & Sektor Perusahaan. Pilih dari: MV4, TPL, PA, MV2, Properti, Travel, Cargo.",
-        "max_rounds": 1
+        "desc": "Klasifikasi kebutuhan asuransi. Dihitung otomatis dari sektor, deskripsi, jumlah karyawan, dan kantor cabang menggunakan guideline rules. JANGAN di-search.",
+        "max_rounds": 0
     },
     "Jumlah Karyawan": {
         "desc": "Total jumlah karyawan aktif terbaru di perusahaan tersebut (dalam bentuk angka ataupun range). Contoh: '100-200', '1500'.",
@@ -94,7 +96,7 @@ class ResearchPipeline:
             response = await self.client.chat.completions.create(
                 model=self.deployment,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=1
+                temperature=0.2
             )
             content = response.choices[0].message.content
 
@@ -124,14 +126,14 @@ class ResearchPipeline:
                 result = await asyncio.to_thread(
                     self.tavily.search,
                     query=query,
-                    search_depth="basic",
+                    search_depth="advanced",
                     max_results=3,
                     include_raw_content=False,
                     include_answer=True
                 )
                 for res in result.get("results", []):
                     snippet = res.get("content") or res.get("snippet", "")
-                    aggregrated_content.append(f"Source: {res.get('url')}\nContent: {snippet[:500]}")
+                    aggregrated_content.append(f"Source: {res.get('url')}\nContent: {snippet[:1200]}")
             except Exception as e:
                 logger.error(f"Search failed for query '{query}': {e}")
 
@@ -140,6 +142,7 @@ class ResearchPipeline:
     async def perform_search_stream(self, queries: List[str]):
         """Perform Tavily search and stream log messages."""
         aggregrated_content = []
+        all_sources = []
 
         # Deduplicate queries
         unique_queries = list(set(queries))
@@ -151,7 +154,7 @@ class ResearchPipeline:
                 result = await asyncio.to_thread(
                     self.tavily.search,
                     query=query,
-                    search_depth="basic",
+                    search_depth="advanced",
                     max_results=3,
                     include_raw_content=False,
                     include_answer=True
@@ -159,8 +162,9 @@ class ResearchPipeline:
                 for res in result.get("results", []):
                     snippet = res.get("content") or res.get("snippet", "")
                     aggregrated_content.append(
-                        f"Source: {res.get('url')}\nContent: {snippet[:500]}"
+                        f"Source: {res.get('url')}\nContent: {snippet[:1200]}"
                     )
+                    all_sources.append({"url": res.get("url", ""), "title": res.get("title", "Untitled")})
                 yield (
                     "log",
                     f"Search completed: {query} ({len(result.get('results', []))} results)",
@@ -168,6 +172,8 @@ class ResearchPipeline:
             except Exception as e:
                 yield ("log", f"Search failed for query '{query}': {e}")
 
+        # Yield collected source metadata for reading_event
+        yield ("sources", all_sources)
         yield ("result", "\n\n".join(aggregrated_content))
    
     async def extract_and_evaluate(self, company_name: str, content: str, current_fields: Dict[str, EnrichmentField]) -> Dict[str, EnrichmentField]:
@@ -181,26 +187,38 @@ class ResearchPipeline:
         schema_desc = {k: ENRICHMENT_SCHEMA[k]["desc"] for k in target_fields}
        
         prompt = f"""
-        You're a Data Extraction Specialist.
+        You're a Data Extraction Specialist for Insurance Lead Enrichment.
         Company: {company_name}
        
         Search results:
-        {content[:15000]} # Limit to first 15000 characters
+        {content[:15000]}
 
         Task: Extract information for the following fields based on the search results.
         Fields to find: {json.dumps(schema_desc, indent=2)}
 
+        IMPORTANT GUIDELINES:
+        - For 'Sektor Perusahaan': identify the primary industry sector in max 5 words
+        - For 'Alamat': extract full headquarters address (street, city, postal code)
+        - For 'Kontak': extract official email and phone number for business inquiries
+        - For 'Jumlah Karyawan': extract exact number or range of active employees
+        - For 'Short Description': write 1-3 sentences about core business/products
+        - For 'Kantor Cabang': list number of branches and their city locations
+        - For 'PIC Perusahaan': find CEO/Owner/Director name and title
+        - For 'Laporan Keuangan': find latest revenue or profit figures (preferably 2024-2025)
+        - Do NOT fill 'Potensi Polis' - it will be calculated separately
+
         Instructions:
         1. If found, extract the value concisely.
-        2. Assign a confidence level: 'High (explicitly found), 'Medium' (inferred)', 'Low' (not found/uncertain).
-        3. Return JSON format: {{ "Field Name": {{"value": "...", "confidence": "..."}} }}
+        2. Assign a confidence level: 'High' (explicitly found), 'Medium' (inferred), 'Low' (not found/uncertain).
+        3. Include the source URL where the info was found.
+        4. Return JSON format: {{ "Field Name": {{"value": "...", "confidence": "...", "source": "..."}} }}
         """
 
         try:
             response = await self.client.chat.completions.create(
                 model = self.deployment,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=1
+                temperature=0.2
             )
             content_response = response.choices[0].message.content
 
@@ -223,6 +241,7 @@ class ResearchPipeline:
                     if data.get("value") != "Tidak Tersedia":
                         current_fields[field].value = data.get("value")
                         current_fields[field].confidence = data.get("confidence")
+                        current_fields[field].source = data.get("source", "")
         except Exception as e:
             logger.error(f"Extraction failed: {e}")
 
@@ -272,6 +291,17 @@ class ResearchPipeline:
             for f in missing_fields:
                 state.fields[f].rounds_taken += 1
 
+        # Post-process: derive Potensi Polis from enriched fields
+        potensi = infer_potensi_polis(
+            sektor=state.fields["Sektor Perusahaan"].value,
+            short_description=state.fields["Short Description"].value,
+            jumlah_karyawan=state.fields["Jumlah Karyawan"].value,
+            kantor_cabang=state.fields["Kantor Cabang"].value,
+        )
+        state.fields["Potensi Polis"].value = potensi
+        state.fields["Potensi Polis"].confidence = "High" if potensi != "Tidak Tersedia" else "Low"
+        state.fields["Potensi Polis"].source = "GuidelinePolicyEngine"
+
         return state
 
     async def run_research_stream(
@@ -283,11 +313,13 @@ class ResearchPipeline:
         log_message = "Starting research"
         state.iteration_logs.append(log_message)
         yield ("log", log_message)
+        yield ("event", thinking_event("Starting research for " + company_name))
 
         for round_num in range(1, max_global_rounds + 1):
             log_message = f"Starting search round {round_num}"
             state.iteration_logs.append(log_message)
             yield ("log", log_message)
+            yield ("event", thinking_event(f"Planning search round {round_num}", round_num))
 
             # Identify missing fields
             missing_fields = [
@@ -313,15 +345,22 @@ class ResearchPipeline:
             log_message = f"Generated queries: {queries}"
             state.iteration_logs.append(log_message)
             yield ("log", log_message)
+            yield ("event", searching_event(queries, round_num))
 
             # Perform Search
             content = ""
+            collected_sources = []
             async for event_type, payload in self.perform_search_stream(queries):
                 if event_type == "log":
                     state.iteration_logs.append(payload)
                     yield ("log", payload)
                 elif event_type == "result":
                     content = payload
+                elif event_type == "sources":
+                    collected_sources = payload
+
+            if collected_sources:
+                yield ("event", reading_event(collected_sources, round_num))
 
             if not content or content == "No search results available":
                 log_message = "No new information found in search."
@@ -333,6 +372,7 @@ class ResearchPipeline:
             log_message = "Extracting data from search results"
             state.iteration_logs.append(log_message)
             yield ("log", log_message)
+            yield ("event", analyzing_event("Extracting data from search results", round_num))
             state.fields = await self.extract_and_evaluate(company_name, content, state.fields)
             log_message = f"Extraction round {round_num} completed"
             state.iteration_logs.append(log_message)
@@ -342,4 +382,16 @@ class ResearchPipeline:
             for f in missing_fields:
                 state.fields[f].rounds_taken += 1
 
+        # Post-process: derive Potensi Polis from enriched fields
+        potensi = infer_potensi_polis(
+            sektor=state.fields["Sektor Perusahaan"].value,
+            short_description=state.fields["Short Description"].value,
+            jumlah_karyawan=state.fields["Jumlah Karyawan"].value,
+            kantor_cabang=state.fields["Kantor Cabang"].value,
+        )
+        state.fields["Potensi Polis"].value = potensi
+        state.fields["Potensi Polis"].confidence = "High" if potensi != "Tidak Tersedia" else "Low"
+        state.fields["Potensi Polis"].source = "GuidelinePolicyEngine"
+
+        yield ("event", complete_event(f"Research completed for {company_name}"))
         yield ("result", state)
