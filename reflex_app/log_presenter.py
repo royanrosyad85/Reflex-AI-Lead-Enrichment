@@ -1,6 +1,3 @@
-"""Helpers for research log presentation."""
-
-
 def phase_title(event: dict) -> str:
     """Generate display title for a research event phase."""
     phase = event.get("phase", "")
