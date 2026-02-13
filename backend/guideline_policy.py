@@ -16,6 +16,45 @@ ALLOWED_POLICIES = [
     "MV4", "MV2", "PA", "Cargo", "Heavy Equipment", "Marine", "Travel", "Properti", "TPL"
 ]
 
+SECTOR_FALLBACK = {
+    "telekomunikasi": ["PA"],
+    "telco": ["PA"],
+    "teknologi": ["PA"],
+    "technology": ["PA"],
+    "it": ["PA"],
+    "perbankan": ["PA", "Properti"],
+    "banking": ["PA", "Properti"],
+    "keuangan": ["PA", "Properti"],
+    "finance": ["PA", "Properti"],
+    "pertambangan": ["PA", "Heavy Equipment", "MV4"],
+    "mining": ["PA", "Heavy Equipment", "MV4"],
+    "retail": ["PA", "Properti"],
+    "ritel": ["PA", "Properti"],
+    "perdagangan": ["PA", "Properti"],
+    "energi": ["PA", "Properti", "Heavy Equipment"],
+    "energy": ["PA", "Properti", "Heavy Equipment"],
+    "kesehatan": ["PA", "Properti"],
+    "healthcare": ["PA", "Properti"],
+    "farmasi": ["PA", "Properti"],
+    "pendidikan": ["PA", "Properti"],
+    "education": ["PA", "Properti"],
+    "perhotelan": ["PA", "Properti", "Travel"],
+    "hospitality": ["PA", "Properti", "Travel"],
+    "transportasi": ["PA", "MV4", "Cargo"],
+    "transportation": ["PA", "MV4", "Cargo"],
+    "agribisnis": ["PA", "Heavy Equipment"],
+    "agriculture": ["PA", "Heavy Equipment"],
+    "properti": ["Properti", "PA"],
+    "real estate": ["Properti", "PA"],
+    "food": ["PA", "Properti"],
+    "makanan": ["PA", "Properti"],
+    "fmcg": ["PA", "Cargo", "Properti"],
+    "otomotif": ["PA", "MV4", "Heavy Equipment"],
+    "automotive": ["PA", "MV4", "Heavy Equipment"],
+    "media": ["PA"],
+    "telkom": ["PA"],
+}
+
 
 def _contains_any(text: str, keywords: List[str]) -> bool:
     lower = text.lower()
@@ -95,5 +134,16 @@ def infer_potensi_polis(
     for p in picks:
         if p in ALLOWED_POLICIES and p not in ordered_unique:
             ordered_unique.append(p)
+
+    # Sector-based fallback if no keyword rules matched
+    if not ordered_unique and sektor.strip():
+        sektor_lower = sektor.strip().lower()
+        for key, fallback_policies in SECTOR_FALLBACK.items():
+            if key in sektor_lower:
+                ordered_unique = [p for p in fallback_policies if p in ALLOWED_POLICIES]
+                break
+        # If still empty but sector exists, default to PA
+        if not ordered_unique:
+            ordered_unique = ["PA"]
 
     return ", ".join(ordered_unique) if ordered_unique else "Tidak Tersedia"
