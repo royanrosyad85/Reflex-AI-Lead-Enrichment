@@ -1,6 +1,6 @@
 python-dotenv
 tavily-python
 openai
-reflex
+reflex==0.8.26
 langgraph
 pandas
