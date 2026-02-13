@@ -4,7 +4,7 @@ import reflex as rx
 import asyncio
 import csv
 from io import StringIO
-from typing import List, Dict, Any
+from typing import List, Dict, Any, TypedDict, NotRequired, cast
 from dotenv import load_dotenv
 from tavily import TavilyClient
 from openai import AsyncAzureOpenAI
@@ -33,6 +33,23 @@ def _default_companies() -> List[Dict[str, str]]:
     ]
 
 
+class ResearchSource(TypedDict):
+    domain: str
+    favicon: str
+
+
+class ResearchEvent(TypedDict):
+    phase: str
+    message: str
+    is_active: bool
+    query_count: NotRequired[int]
+    queries_preview: NotRequired[str]
+    source_count: NotRequired[int]
+    sources_preview: NotRequired[str]
+    queries: NotRequired[List[str]]
+    sources: NotRequired[List[ResearchSource]]
+
+
 class State(rx.State):
 
     companies: List[Dict[str, str]] = _default_companies()
@@ -42,13 +59,45 @@ class State(rx.State):
     progress: int = 0
     status_log: str = ""
     sidebar_open: bool = True
+    sidebar_width: int = 340
+    sidebar_width_storage: str = rx.LocalStorage("340", name="sidebar_width")
     research_logs: List[str] = []
-    research_events: List[Dict[str, Any]] = []
+    research_events: List[ResearchEvent] = []
     log_query: str = ""
     current_company: str = ""
+    undo_visible: bool = False
+    undo_snapshot_logs: List[str] = []
+    undo_snapshot_events: List[ResearchEvent] = []
+    undo_seconds_left: int = 0
+    undo_token: int = 0
+
+    SIDEBAR_MIN_WIDTH: int = 280
+    SIDEBAR_MAX_WIDTH: int = 520
    
     def toggle_sidebar(self):
         self.sidebar_open = not self.sidebar_open
+
+    def _clamp_sidebar_width(self, width: int) -> int:
+        return max(self.SIDEBAR_MIN_WIDTH, min(self.SIDEBAR_MAX_WIDTH, width))
+
+    def hydrate_sidebar_width(self):
+        raw_value = (self.sidebar_width_storage or "").strip()
+        try:
+            width = int(raw_value)
+        except ValueError:
+            width = 340
+        clamped = self._clamp_sidebar_width(width)
+        self.sidebar_width = clamped
+        self.sidebar_width_storage = str(clamped)
+
+    def set_sidebar_width(self, width: Any):
+        try:
+            parsed = int(float(str(width)))
+        except (ValueError, TypeError):
+            return
+        clamped = self._clamp_sidebar_width(parsed)
+        self.sidebar_width = clamped
+        self.sidebar_width_storage = str(clamped)
    
     def add_row(self):
         self.companies = self.companies + [{
@@ -68,11 +117,67 @@ class State(rx.State):
     def append_log(self, message: str):
         self.research_logs = self.research_logs + [message]
 
-    def append_event(self, event: Dict[str, Any]):
+    def append_event(self, event: ResearchEvent):
         self.research_events = self.research_events + [event]
 
+    def deactivate_all_events(self):
+        """Set is_active=False on all spinner events. Reassigns list for Reflex reactivity."""
+        self.research_events = [
+            {**e, "is_active": False} if e.get("is_active") else e
+            for e in self.research_events
+        ]
+
     def clear_search(self):
+        self.undo_snapshot_logs = list(self.research_logs)
+        self.undo_snapshot_events = cast(List[ResearchEvent], [dict(event) for event in self.research_events])
+        has_logs = bool(self.undo_snapshot_logs or self.undo_snapshot_events)
+
         self.log_query = ""
+        self.research_logs = []
+        self.research_events = []
+
+        self.undo_visible = has_logs
+        self.undo_token += 1
+        self.undo_seconds_left = 5
+
+        if not has_logs:
+            self.undo_seconds_left = 0
+            return
+
+        return State.run_undo_countdown
+
+    @rx.event(background=True)
+    async def run_undo_countdown(self):
+        async with self:
+            token = self.undo_token
+
+        for seconds in [4, 3, 2, 1, 0]:
+            await asyncio.sleep(1)
+
+            async with self:
+                if not self.undo_visible or token != self.undo_token:
+                    return
+
+                self.undo_seconds_left = seconds
+
+                if seconds == 0:
+                    self.undo_visible = False
+                    self.undo_snapshot_logs = []
+                    self.undo_snapshot_events = []
+                    self.undo_seconds_left = 0
+                    return
+
+    def undo_clear_search(self):
+        if not self.undo_visible:
+            return
+
+        self.research_logs = list(self.undo_snapshot_logs)
+        self.research_events = cast(List[ResearchEvent], [dict(event) for event in self.undo_snapshot_events])
+        self.undo_visible = False
+        self.undo_snapshot_logs = []
+        self.undo_snapshot_events = []
+        self.undo_seconds_left = 0
+        self.undo_token += 1
 
     def reset_session_state(self):
         if self.is_processing:
@@ -80,6 +185,11 @@ class State(rx.State):
         self.log_query = ""
         self.research_logs = []
         self.research_events = []
+        self.undo_visible = False
+        self.undo_snapshot_logs = []
+        self.undo_snapshot_events = []
+        self.undo_seconds_left = 0
+        self.undo_token += 1
         self.progress = 0
         self.status_log = ""
         self.current_company = ""
@@ -94,7 +204,7 @@ class State(rx.State):
         return [entry for entry in self.research_logs if query in entry.lower()]
 
     @rx.var
-    def filtered_research_events(self) -> List[Dict[str, Any]]:
+    def filtered_research_events(self) -> List[ResearchEvent]:
         query = self.log_query.strip().lower()
         if not query:
             return self.research_events
@@ -104,6 +214,10 @@ class State(rx.State):
             or any(query in q.lower() for q in e.get("queries", []))
             or any(query in str(s.get("domain", "")).lower() for s in e.get("sources", []))
         ]
+
+    @rx.var
+    def undo_button_label(self) -> str:
+        return f"Undo ({self.undo_seconds_left}s)"
 
     async def run_enrichment(self):
         # Filter companies that have names
@@ -130,8 +244,6 @@ class State(rx.State):
             if not all([tavily_api_key, azure_api_key, azure_endpoint, deployment]):
                 self.status_log = "Error: Missing environment variables."
                 self.append_log(self.status_log)
-                self.is_processing = False
-                yield
                 return
 
             tavily_client = TavilyClient(api_key=str(tavily_api_key))
@@ -143,95 +255,103 @@ class State(rx.State):
            
             pipeline = ResearchPipeline(tavily_client, azure_client, str(deployment))
 
-        except Exception as e:
-            self.status_log = f"Initialization Error: {str(e)}"
-            self.append_log(self.status_log)
-            self.is_processing = False
-            yield
-            return
+            total = len(targets)
+            for idx, (table_index, company_name) in enumerate(targets):
+                # Check if already enriched (simple check: if Sektor Perusahaan is not empty)
+                current_row = self.companies[table_index]
+                sektor = current_row.get("Sektor Perusahaan")
+                if sektor and isinstance(sektor, str) and sektor.strip():
+                    self.status_log = f"Skipping {company_name} (already enriched)..."
+                    self.append_log(self.status_log)
+                    self.progress = int((idx + 1) / total * 100)
+                    yield
+                    continue
 
-        total = len(targets)
-        for idx, (table_index, company_name) in enumerate(targets):
-            # Check if already enriched (simple check: if Sektor Perusahaan is not empty)
-            current_row = self.companies[table_index]
-            sektor = current_row.get("Sektor Perusahaan")
-            if sektor and isinstance(sektor, str) and sektor.strip():
-                self.status_log = f"Skipping {company_name} (already enriched)..."
+                self.status_log = f"Processing {idx + 1}/{total}: {company_name}..."
                 self.append_log(self.status_log)
-                self.progress = int((idx + 1) / total * 100)
                 yield
-                continue
+           
+                try:
+                    # Run research pipeline dengan streaming logs real-time
+                    result_state = None
+                    self.current_company = company_name
+                    async for event_type, payload in pipeline.run_research_stream(company_name):
+                        if event_type == "log":
+                            # payload adalah string log message
+                            self.append_log(f"{company_name}: {payload}")
+                            yield
+                        elif event_type == "event":
+                            # payload adalah structured research event dict
+                            if not isinstance(payload, dict):
+                                continue
+                            event_payload = cast(ResearchEvent, payload)
+                            if event_payload.get("phase") == "complete":
+                                self.deactivate_all_events()
+                            self.append_event(event_payload)
+                            yield
+                        elif event_type == "result":
+                            # payload adalah CompanyProfileState object
+                            result_state = payload
 
-            self.status_log = f"Processing {idx + 1}/{total}: {company_name}..."
+                    if result_state is None:
+                        raise ValueError("No result returned from research pipeline.")
+
+                    # Ensure result_state is CompanyProfileState type
+                    from backend.researcher import CompanyProfileState as CPState
+                    if not isinstance(result_state, CPState):
+                        raise ValueError(f"Invalid result type: expected CompanyProfileState, got {type(result_state)}")
+
+                    result_dict = result_state.to_dict()
+                    fields = result_dict.get("fields", {})
+
+                    # Update state - create new list to trigger reactivity
+                    new_companies = list(self.companies)
+                    updated_row = dict(new_companies[table_index])
+
+                    mapping = {
+                        "Sektor Perusahaan": "Sektor Perusahaan",
+                        "Alamat": "Alamat",
+                        "Kontak": "Kontak",
+                        "Potensi Polis": "Potensi Polis",
+                        "Jumlah Karyawan": "Jumlah Karyawan",
+                        "Short Description": "Short Description",
+                        "Kantor Cabang": "Kantor Cabang",
+                        "PIC Perusahaan": "PIC Perusahaan",
+                        "Laporan Keuangan": "Laporan Keuangan"
+                    }
+
+                    for field_key, col_key in mapping.items():
+                        field_data = fields.get(field_key, {})
+                        updated_row[col_key] = field_data.get("value", "") if isinstance(field_data, dict) else ""
+               
+                    new_companies[table_index] = updated_row
+                    self.companies = new_companies
+               
+                except Exception as e:
+                    self.status_log = f"Error processing {company_name}: {str(e)}"
+                    self.append_log(self.status_log)
+                    print(f"Error: {e}")
+
+                # Clear current company after processing (Root Cause 1 fix)
+                self.current_company = ""
+                # Update progress
+                self.progress = int((idx + 1) / total * 100)
+                if not self.status_log.startswith("Error processing"):
+                    self.append_log(f"Completed {company_name}.")
+                yield
+
+            self.status_log = "Enrichment Completed!"
             self.append_log(self.status_log)
+
+        except Exception as e:
+            self.status_log = f"Unexpected error: {str(e)}"
+            self.append_log(self.status_log)
+            print(f"Unexpected error: {e}")
+        finally:
+            self.is_processing = False
+            self.current_company = ""
+            self.deactivate_all_events()
             yield
-           
-            try:
-                # Run research pipeline dengan streaming logs real-time
-                result_state = None
-                self.current_company = company_name
-                async for event_type, payload in pipeline.run_research_stream(company_name):
-                    if event_type == "log":
-                        # payload adalah string log message
-                        self.append_log(f"{company_name}: {payload}")
-                        yield
-                    elif event_type == "event":
-                        # payload adalah structured research event dict
-                        self.append_event(payload)
-                        yield
-                    elif event_type == "result":
-                        # payload adalah CompanyProfileState object
-                        result_state = payload
-
-                if result_state is None:
-                    raise ValueError("No result returned from research pipeline.")
-
-                # Ensure result_state is CompanyProfileState type
-                from backend.researcher import CompanyProfileState as CPState
-                if not isinstance(result_state, CPState):
-                    raise ValueError(f"Invalid result type: expected CompanyProfileState, got {type(result_state)}")
-
-                result_dict = result_state.to_dict()
-                fields = result_dict.get("fields", {})
-
-                # Update state - create new list to trigger reactivity
-                new_companies = list(self.companies)
-                updated_row = dict(new_companies[table_index])
-
-                mapping = {
-                    "Sektor Perusahaan": "Sektor Perusahaan",
-                    "Alamat": "Alamat",
-                    "Kontak": "Kontak",
-                    "Potensi Polis": "Potensi Polis",
-                    "Jumlah Karyawan": "Jumlah Karyawan",
-                    "Short Description": "Short Description",
-                    "Kantor Cabang": "Kantor Cabang",
-                    "PIC Perusahaan": "PIC Perusahaan",
-                    "Laporan Keuangan": "Laporan Keuangan"
-                }
-
-                for field_key, col_key in mapping.items():
-                    field_data = fields.get(field_key, {})
-                    updated_row[col_key] = field_data.get("value", "") if isinstance(field_data, dict) else ""
-               
-                new_companies[table_index] = updated_row
-                self.companies = new_companies
-               
-            except Exception as e:
-                self.status_log = f"Error processing {company_name}: {str(e)}"
-                self.append_log(self.status_log)
-                print(f"Error: {e}")
-           
-            # Update progress
-            self.progress = int((idx + 1) / total * 100)
-            if not self.status_log.startswith("Error processing"):
-                self.append_log(f"Completed {company_name}.")
-            yield
-
-        self.status_log = "Enrichment Completed!"
-        self.append_log(self.status_log)
-        self.is_processing = False
-        yield
 
     def export_csv(self):
         output = StringIO()
