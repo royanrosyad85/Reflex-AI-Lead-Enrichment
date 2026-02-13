@@ -26,7 +26,9 @@ def make_event(phase: str, message: str, round_num: Optional[int] = None) -> dic
 
 def thinking_event(message: str, round_num: Optional[int] = None) -> dict:
     """Create a thinking phase event (AI is reasoning)."""
-    return make_event("thinking", message, round_num)
+    e = make_event("thinking", message, round_num)
+    e["is_active"] = True
+    return e
 
 
 def searching_event(queries: list, round_num: int) -> dict:
@@ -58,7 +60,9 @@ def reading_event(sources: list, round_num: int) -> dict:
 
 def analyzing_event(message: str, round_num: int) -> dict:
     """Create an analyzing phase event (extracting data)."""
-    return make_event("analyzing", message, round_num)
+    e = make_event("analyzing", message, round_num)
+    e["is_active"] = True
+    return e
 
 
 def complete_event(message: str) -> dict:
