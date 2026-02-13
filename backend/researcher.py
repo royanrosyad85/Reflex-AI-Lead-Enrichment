@@ -1,6 +1,9 @@
 import asyncio
 import json
 import logging
+import re
+import time as _time
+from urllib.parse import urlparse
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from tavily import TavilyClient
@@ -76,6 +79,212 @@ ENRICHMENT_SCHEMA = {
         "max_rounds": 3
     }
 }
+
+# --- Field Tier Classification ---
+TIER_1_FIELDS = ["Sektor Perusahaan", "Short Description", "Jumlah Karyawan", "Kantor Cabang"]
+TIER_2_FIELDS = ["Alamat", "Kontak", "PIC Perusahaan"]
+TIER_3_FIELDS = ["Laporan Keuangan"]
+
+CORE_FIELDS = ["Sektor Perusahaan", "Short Description", "Jumlah Karyawan"]
+
+def should_continue_search(fields: dict) -> bool:
+    """Return False when core fields are all High confidence."""
+    return not all(
+        fields.get(f, EnrichmentField()).confidence == "High"
+        for f in CORE_FIELDS
+    )
+
+NOT_FOUND_REASONS = {
+    "Kontak": "Tidak ditemukan di sumber publik",
+    "PIC Perusahaan": "Tidak ditemukan di sumber publik",
+    "Laporan Keuangan": "Tidak tersedia (data keuangan non-publik)",
+    "Kantor Cabang": "Tidak ditemukan informasi cabang",
+    "Alamat": "Tidak ditemukan alamat lengkap",
+}
+
+def format_not_found(field_name: str) -> str:
+    """Return a field-specific 'not found' reason instead of generic text."""
+    return NOT_FOUND_REASONS.get(field_name, "Tidak ditemukan")
+
+MAX_SEARCH_SECONDS = 45
+
+TAVILY_SEARCH_CONFIG = {
+    "search_depth": "advanced",
+    "max_results": 5,
+    "country": "indonesia",
+    "include_raw_content": False,
+    "include_answer": False,
+    "exclude_domains": [
+        "facebook.com",
+        "instagram.com",
+        "twitter.com",
+        "x.com",
+        "tiktok.com",
+        "youtube.com",
+        "pinterest.com",
+    ],
+}
+
+TAVILY_EXTRACT_CONFIG = {
+    "extract_depth": "advanced",
+    "chunks_per_source": 3,
+    "timeout": 45.0,
+}
+
+def is_time_budget_exceeded(start_time: float, max_seconds: int = MAX_SEARCH_SECONDS) -> bool:
+    """Return True when elapsed time exceeds the budget."""
+    return (_time.time() - start_time) > max_seconds
+
+
+def build_extract_query(missing_fields: list) -> str:
+    """Build focused extraction guidance for Tavily extract."""
+    field_hints = {
+        "Kontak": "kontak resmi (email, telepon, whatsapp)",
+        "Alamat": "alamat kantor pusat lengkap",
+        "PIC Perusahaan": "nama pimpinan (CEO/Owner/Direktur)",
+    }
+    selected = [field_hints.get(field, field.lower()) for field in missing_fields]
+    if not selected:
+        selected = ["profil perusahaan"]
+    ordered_selected = list(dict.fromkeys(str(item) for item in selected))
+    return (
+        "Ekstrak bukti untuk: "
+        + ", ".join(ordered_selected)
+        + ". Return only factual statements from the page."
+    )
+
+
+def normalize_contact_value(raw):
+    """Normalize contact object/string into a consistent string value."""
+    def _clean(val: str) -> str:
+        return re.sub(r"\s+", "", val.strip())
+
+    if isinstance(raw, dict):
+        email = _clean(str(raw.get("email", "")))
+        phone = _clean(str(raw.get("phone", "")))
+        whatsapp = _clean(str(raw.get("whatsapp", "")))
+
+        parts = []
+        if email:
+            parts.append(f"Email: {email}")
+        if phone:
+            parts.append(f"Telp: {phone}")
+        if whatsapp:
+            parts.append(f"WA: {whatsapp}")
+
+        return " | ".join(parts) if parts else "Tidak Tersedia"
+
+    if raw is None:
+        return "Tidak Tersedia"
+
+    if isinstance(raw, str):
+        candidate = raw.strip()
+        if candidate.startswith("{") and candidate.endswith("}"):
+            try:
+                parsed = json.loads(candidate)
+                if isinstance(parsed, dict):
+                    return normalize_contact_value(parsed)
+            except json.JSONDecodeError:
+                pass
+
+    value = str(raw).strip()
+    return value or "Tidak Tersedia"
+
+
+def curate_candidate_urls(company_name: str, results: list, min_score: float = 0.5) -> list:
+    """Curate high-signal URLs from raw Tavily search results."""
+    if not results:
+        return []
+
+    exclude_domains = set(TAVILY_SEARCH_CONFIG.get("exclude_domains", []))
+    company_tokens = [t.lower() for t in re.findall(r"[a-zA-Z0-9]+", company_name) if len(t) > 2]
+
+    curated_urls = []
+    seen = set()
+
+    for result in results:
+        url = (result or {}).get("url", "")
+        if not url:
+            continue
+
+        parsed = urlparse(url)
+        domain = (parsed.netloc or "").lower().replace("www.", "")
+        if not domain:
+            continue
+
+        if any(domain == blocked or domain.endswith(f".{blocked}") for blocked in exclude_domains):
+            continue
+
+        score = result.get("score")
+        try:
+            score_value = float(score) if score is not None else 0.0
+        except (TypeError, ValueError):
+            score_value = 0.0
+
+        title = str(result.get("title", "")).lower()
+        content = str(result.get("content") or result.get("snippet") or "").lower()
+        token_hit = any(token in domain or token in title or token in content for token in company_tokens)
+        if score_value < min_score and not token_hit:
+            continue
+
+        normalized_url = url.split("#", 1)[0]
+        if normalized_url in seen:
+            continue
+        seen.add(normalized_url)
+        curated_urls.append(normalized_url)
+
+    return curated_urls
+
+def build_search_queries(company_name: str, missing_fields: list) -> list:
+    """Build dual-language field-aware queries and preserve insertion order."""
+    queries: list = []
+    company = company_name.strip()
+
+    tier1_missing = [f for f in missing_fields if f in TIER_1_FIELDS]
+    if tier1_missing:
+        queries.extend(
+            [
+                f"{company} company profile industry employee count",
+                f"{company} profil perusahaan sektor jumlah karyawan",
+                f"{company} business overview products services",
+            ]
+        )
+
+    if "Kontak" in missing_fields:
+        queries.extend(
+            [
+                f"{company} contact us email phone whatsapp",
+                f"{company} kontak resmi email telepon whatsapp",
+            ]
+        )
+
+    if "Alamat" in missing_fields:
+        queries.extend(
+            [
+                f"{company} headquarters office address",
+                f"{company} alamat kantor pusat",
+            ]
+        )
+
+    if "PIC Perusahaan" in missing_fields:
+        queries.extend(
+            [
+                f"{company} CEO director leadership",
+                f"{company} direktur utama CEO owner",
+            ]
+        )
+
+    if "Laporan Keuangan" in missing_fields:
+        queries.extend(
+            [
+                f"{company} annual report revenue 2024 2025",
+                f"{company} laporan keuangan pendapatan 2024 2025",
+            ]
+        )
+
+    ordered_unique = list(dict.fromkeys(queries))
+    return ordered_unique[:8]
+
 class ResearchPipeline:
     def __init__(self, tavily_client: TavilyClient, azure_client: AsyncAzureOpenAI, deployment_name: str):
         self.tavily = tavily_client
@@ -112,69 +321,147 @@ class ResearchPipeline:
             logger.warning(f"Failed to parse query JSON: {e}, using fallback")
             return [f"{company_name} {field}" for field in missing_fields]
        
-    async def perform_search(self, queries: List[str]) -> str:
-        """Perform Tavily search for a list of queries and aggregrate results."""
-        aggregrated_content = []
-       
-        # Deduplicate queries
-        unique_queries = list(set(queries))
+    async def extract_from_urls(self, urls: List[str], missing_fields: List[str]) -> List[dict]:
+        """Extract richer evidence from curated URLs using Tavily extract."""
+        if not urls:
+            return []
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.tavily.extract,
+                    urls=urls,
+                    query=build_extract_query(missing_fields),
+                    **TAVILY_EXTRACT_CONFIG,
+                ),
+                timeout=TAVILY_EXTRACT_CONFIG["timeout"],
+            )
+            return response.get("results", []) if isinstance(response, dict) else []
+        except asyncio.TimeoutError:
+            logger.error("Extraction from curated URLs timed out")
+            return []
+        except Exception as e:
+            logger.error(f"Extraction from curated URLs failed: {e}")
+            return []
 
-        # Limit to 5 queries
-        for query in unique_queries[:5]:
-            try:
-                logger.info(f"Searching: {query}")
-                result = await asyncio.to_thread(
-                    self.tavily.search,
-                    query=query,
-                    search_depth="advanced",
-                    max_results=3,
-                    include_raw_content=False,
-                    include_answer=True
-                )
-                for res in result.get("results", []):
+    async def perform_search(self, company_name: str, queries: List[str], missing_fields: List[str]):
+        """Run Tavily search in parallel, curate URLs, then run extraction."""
+        unique_queries = list(dict.fromkeys(queries))[:8]
+
+        tasks = [
+            asyncio.to_thread(
+                self.tavily.search,
+                query=query,
+                **TAVILY_SEARCH_CONFIG,
+            )
+            for query in unique_queries
+        ]
+        try:
+            search_outputs = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=MAX_SEARCH_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.error("Parallel Tavily search timed out")
+            search_outputs = []
+
+        raw_results = []
+        for query, output in zip(unique_queries, search_outputs):
+            if isinstance(output, Exception):
+                logger.error(f"Search failed for query '{query}': {output}")
+                continue
+            if not isinstance(output, dict):
+                continue
+            raw_results.extend(output.get("results", []))
+
+        curated_urls = curate_candidate_urls(company_name, raw_results)
+        curated_set = {url.split("#", 1)[0] for url in curated_urls}
+        extracted_results = await self.extract_from_urls(curated_urls, missing_fields)
+
+        aggregated_content = []
+        for item in extracted_results:
+            snippet = item.get("raw_content") or item.get("content") or ""
+            aggregated_content.append(f"Source: {item.get('url')}\nContent: {snippet[:1800]}")
+
+        if not aggregated_content:
+            for res in raw_results:
+                if (res.get("url") or "").split("#", 1)[0] in curated_set:
                     snippet = res.get("content") or res.get("snippet", "")
-                    aggregrated_content.append(f"Source: {res.get('url')}\nContent: {snippet[:1200]}")
-            except Exception as e:
-                logger.error(f"Search failed for query '{query}': {e}")
+                    aggregated_content.append(f"Source: {res.get('url')}\nContent: {snippet[:1200]}")
 
-        return "\n\n".join(aggregrated_content)
+        collected_sources = []
+        seen_sources = set()
+        for res in raw_results:
+            url = res.get("url")
+            normalized_url = (url or "").split("#", 1)[0]
+            if normalized_url in curated_set and normalized_url not in seen_sources:
+                seen_sources.add(normalized_url)
+                collected_sources.append({"url": normalized_url, "title": res.get("title", "Untitled")})
 
-    async def perform_search_stream(self, queries: List[str]):
-        """Perform Tavily search and stream log messages."""
-        aggregrated_content = []
-        all_sources = []
+        return "\n\n".join(aggregated_content), collected_sources
 
-        # Deduplicate queries
-        unique_queries = list(set(queries))
-
-        # Limit to 5 queries
-        for query in unique_queries[:5]:
+    async def perform_search_stream(self, company_name: str, queries: List[str], missing_fields: List[str]):
+        """Perform Tavily search pipeline and stream progress logs."""
+        unique_queries = list(dict.fromkeys(queries))[:8]
+        for query in unique_queries:
             yield ("log", f"Searching: {query}")
-            try:
-                result = await asyncio.to_thread(
-                    self.tavily.search,
-                    query=query,
-                    search_depth="advanced",
-                    max_results=3,
-                    include_raw_content=False,
-                    include_answer=True
-                )
-                for res in result.get("results", []):
-                    snippet = res.get("content") or res.get("snippet", "")
-                    aggregrated_content.append(
-                        f"Source: {res.get('url')}\nContent: {snippet[:1200]}"
-                    )
-                    all_sources.append({"url": res.get("url", ""), "title": res.get("title", "Untitled")})
-                yield (
-                    "log",
-                    f"Search completed: {query} ({len(result.get('results', []))} results)",
-                )
-            except Exception as e:
-                yield ("log", f"Search failed for query '{query}': {e}")
 
-        # Yield collected source metadata for reading_event
-        yield ("sources", all_sources)
-        yield ("result", "\n\n".join(aggregrated_content))
+        tasks = [
+            asyncio.to_thread(
+                self.tavily.search,
+                query=query,
+                **TAVILY_SEARCH_CONFIG,
+            )
+            for query in unique_queries
+        ]
+        try:
+            search_outputs = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=MAX_SEARCH_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            yield ("log", "Search timeout reached")
+            search_outputs = []
+
+        raw_results = []
+        for query, output in zip(unique_queries, search_outputs):
+            if isinstance(output, Exception):
+                yield ("log", f"Search failed for query '{query}': {output}")
+                continue
+            if not isinstance(output, dict):
+                continue
+            results_count = len(output.get("results", []))
+            raw_results.extend(output.get("results", []))
+            yield ("log", f"Search completed: {query} ({results_count} results)")
+
+        curated_urls = curate_candidate_urls(company_name, raw_results)
+        curated_set = {url.split("#", 1)[0] for url in curated_urls}
+        yield ("log", f"Curated URLs: {len(curated_urls)}")
+
+        extracted_results = await self.extract_from_urls(curated_urls, missing_fields)
+        yield ("log", f"Extracted results: {len(extracted_results)}")
+
+        aggregated_content = []
+        if extracted_results:
+            for item in extracted_results:
+                snippet = item.get("raw_content") or item.get("content") or ""
+                aggregated_content.append(f"Source: {item.get('url')}\nContent: {snippet[:1800]}")
+        else:
+            for res in raw_results:
+                if (res.get("url") or "").split("#", 1)[0] in curated_set:
+                    snippet = res.get("content") or res.get("snippet", "")
+                    aggregated_content.append(f"Source: {res.get('url')}\nContent: {snippet[:1200]}")
+
+        collected_sources = []
+        seen_sources = set()
+        for res in raw_results:
+            url = res.get("url")
+            normalized_url = (url or "").split("#", 1)[0]
+            if normalized_url in curated_set and normalized_url not in seen_sources:
+                seen_sources.add(normalized_url)
+                collected_sources.append({"url": normalized_url, "title": res.get("title", "Untitled")})
+
+        yield ("sources", collected_sources)
+        yield ("result", "\n\n".join(aggregated_content))
    
     async def extract_and_evaluate(self, company_name: str, content: str, current_fields: Dict[str, EnrichmentField]) -> Dict[str, EnrichmentField]:
         """Extract information from search tool content and update fields."""
@@ -199,7 +486,7 @@ class ResearchPipeline:
         IMPORTANT GUIDELINES:
         - For 'Sektor Perusahaan': identify the primary industry sector in max 5 words
         - For 'Alamat': extract full headquarters address (street, city, postal code)
-        - For 'Kontak': extract official email and phone number for business inquiries
+        - For 'Kontak': return value as object with keys email, phone, whatsapp
         - For 'Jumlah Karyawan': extract exact number or range of active employees
         - For 'Short Description': write 1-3 sentences about core business/products
         - For 'Kantor Cabang': list number of branches and their city locations
@@ -212,6 +499,7 @@ class ResearchPipeline:
         2. Assign a confidence level: 'High' (explicitly found), 'Medium' (inferred), 'Low' (not found/uncertain).
         3. Include the source URL where the info was found.
         4. Return JSON format: {{ "Field Name": {{"value": "...", "confidence": "...", "source": "..."}} }}
+        5. For 'Kontak', value MUST be an object: {{"email": "...", "phone": "...", "whatsapp": "..."}}
         """
 
         try:
@@ -239,7 +527,10 @@ class ResearchPipeline:
                 if field in current_fields:
                     # Only update if found something better
                     if data.get("value") != "Tidak Tersedia":
-                        current_fields[field].value = data.get("value")
+                        value = data.get("value")
+                        if field == "Kontak":
+                            value = normalize_contact_value(value)
+                        current_fields[field].value = value
                         current_fields[field].confidence = data.get("confidence")
                         current_fields[field].source = data.get("source", "")
         except Exception as e:
@@ -247,14 +538,21 @@ class ResearchPipeline:
 
         return current_fields
    
-    async def run_research(self, company_name: str, max_global_rounds: int = 3) -> CompanyProfileState:
+    async def run_research(self, company_name: str, max_global_rounds: int = 2) -> CompanyProfileState:
         fields = {k: EnrichmentField() for k in ENRICHMENT_SCHEMA.keys()}
         state = CompanyProfileState(company_name=company_name, fields=fields)
 
         logger.info(f"Starting research for {company_name}")
         state.iteration_logs.append(f"INFO:backend.researcher:Starting research for {company_name}")
+
+        _start = _time.time()
        
         for round_num in range(1, max_global_rounds + 1):
+            if is_time_budget_exceeded(_start):
+                logger.info("Time budget exceeded, finalizing results")
+                state.iteration_logs.append("INFO:backend.researcher:Time budget exceeded, finalizing results")
+                break
+
             logger.info(f"--- Pencarian ke- {round_num} ---")
             state.iteration_logs.append(f"INFO:backend.researcher:--- Pencarian ke- {round_num} ---")
 
@@ -273,12 +571,12 @@ class ResearchPipeline:
             state.iteration_logs.append(f"INFO:backend.researcher:Looking for: {', '.join(missing_fields)}")
 
             # Generate Queries
-            queries = await self.generate_subqueries(company_name, missing_fields, round_num)
+            queries = build_search_queries(company_name, missing_fields)
             logger.info(f"Generated Queries: {queries}")
             state.iteration_logs.append(f"INFO:backend.researcher:Generated Queries: {queries}")
 
             # Perform Search
-            content = await self.perform_search(queries)
+            content, _ = await self.perform_search(company_name, queries, missing_fields)
             if not content or content == "No search results available":
                 logger.info("No new information found in search.")
                 state.iteration_logs.append("INFO:backend.researcher:No new information found in search.")
@@ -291,6 +589,12 @@ class ResearchPipeline:
             for f in missing_fields:
                 state.fields[f].rounds_taken += 1
 
+            # Early stop if core fields are complete
+            if not should_continue_search(state.fields):
+                logger.info("Core fields enriched, stopping early")
+                state.iteration_logs.append("INFO:backend.researcher:Core fields enriched, stopping early")
+                break
+
         # Post-process: derive Potensi Polis from enriched fields
         potensi = infer_potensi_polis(
             sektor=state.fields["Sektor Perusahaan"].value,
@@ -299,13 +603,32 @@ class ResearchPipeline:
             kantor_cabang=state.fields["Kantor Cabang"].value,
         )
         state.fields["Potensi Polis"].value = potensi
-        state.fields["Potensi Polis"].confidence = "High" if potensi != "Tidak Tersedia" else "Low"
+        # Determine confidence based on input completeness
+        _input_count = sum(1 for v in [
+            state.fields["Sektor Perusahaan"].value,
+            state.fields["Short Description"].value,
+            state.fields["Jumlah Karyawan"].value,
+            state.fields["Kantor Cabang"].value,
+        ] if v not in ("Tidak Tersedia", "") and v.strip())
+
+        if potensi == "Tidak Tersedia":
+            _polis_confidence = "Low"
+        elif _input_count >= 3:
+            _polis_confidence = "High"
+        else:
+            _polis_confidence = "Medium"
+        state.fields["Potensi Polis"].confidence = _polis_confidence
         state.fields["Potensi Polis"].source = "GuidelinePolicyEngine"
+
+        # Replace generic "Tidak Tersedia" with field-specific reasons
+        for _field_name, _field_data in state.fields.items():
+            if _field_data.value == "Tidak Tersedia":
+                _field_data.value = format_not_found(_field_name)
 
         return state
 
     async def run_research_stream(
-        self, company_name: str, max_global_rounds: int = 3
+        self, company_name: str, max_global_rounds: int = 2
     ):
         fields = {k: EnrichmentField() for k in ENRICHMENT_SCHEMA.keys()}
         state = CompanyProfileState(company_name=company_name, fields=fields)
@@ -315,7 +638,15 @@ class ResearchPipeline:
         yield ("log", log_message)
         yield ("event", thinking_event("Starting research for " + company_name))
 
+        _start = _time.time()
+
         for round_num in range(1, max_global_rounds + 1):
+            if is_time_budget_exceeded(_start):
+                log_message = "Time budget exceeded, finalizing results"
+                state.iteration_logs.append(log_message)
+                yield ("log", log_message)
+                break
+
             log_message = f"Starting search round {round_num}"
             state.iteration_logs.append(log_message)
             yield ("log", log_message)
@@ -341,7 +672,7 @@ class ResearchPipeline:
             log_message = "Generating search queries"
             state.iteration_logs.append(log_message)
             yield ("log", log_message)
-            queries = await self.generate_subqueries(company_name, missing_fields, round_num)
+            queries = build_search_queries(company_name, missing_fields)
             log_message = f"Generated queries: {queries}"
             state.iteration_logs.append(log_message)
             yield ("log", log_message)
@@ -350,13 +681,13 @@ class ResearchPipeline:
             # Perform Search
             content = ""
             collected_sources = []
-            async for event_type, payload in self.perform_search_stream(queries):
-                if event_type == "log":
+            async for event_type, payload in self.perform_search_stream(company_name, queries, missing_fields):
+                if event_type == "log" and isinstance(payload, str):
                     state.iteration_logs.append(payload)
                     yield ("log", payload)
-                elif event_type == "result":
+                elif event_type == "result" and isinstance(payload, str):
                     content = payload
-                elif event_type == "sources":
+                elif event_type == "sources" and isinstance(payload, list):
                     collected_sources = payload
 
             if collected_sources:
@@ -382,6 +713,13 @@ class ResearchPipeline:
             for f in missing_fields:
                 state.fields[f].rounds_taken += 1
 
+            # Early stop if core fields are complete
+            if not should_continue_search(state.fields):
+                log_message = "Core fields enriched, stopping early"
+                state.iteration_logs.append(log_message)
+                yield ("log", log_message)
+                break
+
         # Post-process: derive Potensi Polis from enriched fields
         potensi = infer_potensi_polis(
             sektor=state.fields["Sektor Perusahaan"].value,
@@ -390,8 +728,27 @@ class ResearchPipeline:
             kantor_cabang=state.fields["Kantor Cabang"].value,
         )
         state.fields["Potensi Polis"].value = potensi
-        state.fields["Potensi Polis"].confidence = "High" if potensi != "Tidak Tersedia" else "Low"
+        # Determine confidence based on input completeness
+        _input_count = sum(1 for v in [
+            state.fields["Sektor Perusahaan"].value,
+            state.fields["Short Description"].value,
+            state.fields["Jumlah Karyawan"].value,
+            state.fields["Kantor Cabang"].value,
+        ] if v not in ("Tidak Tersedia", "") and v.strip())
+
+        if potensi == "Tidak Tersedia":
+            _polis_confidence = "Low"
+        elif _input_count >= 3:
+            _polis_confidence = "High"
+        else:
+            _polis_confidence = "Medium"
+        state.fields["Potensi Polis"].confidence = _polis_confidence
         state.fields["Potensi Polis"].source = "GuidelinePolicyEngine"
+
+        # Replace generic "Tidak Tersedia" with field-specific reasons
+        for _field_name, _field_data in state.fields.items():
+            if _field_data.value == "Tidak Tersedia":
+                _field_data.value = format_not_found(_field_name)
 
         yield ("event", complete_event(f"Research completed for {company_name}"))
         yield ("result", state)
