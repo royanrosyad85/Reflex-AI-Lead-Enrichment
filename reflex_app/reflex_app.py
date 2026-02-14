@@ -1,170 +1,335 @@
 import reflex as rx
-from typing import cast, Any
+from typing import Any, cast
 from reflex.style import set_color_mode, color_mode
+
 from .state import State
 
 
-def render_query_badge(query: rx.Var[str]) -> rx.Component:
-    """Render a single search query as a badge."""
-    return rx.badge(
-        rx.hstack(
-            rx.icon(tag="search", size=12),
-            rx.text(query, size="1"),
+def render_progress_item(item: dict[str, Any]) -> rx.Component:
+    status_icon = rx.match(
+        item["status"],
+        ("active", rx.spinner(size="1", color=rx.color("blue", 9))),
+        ("done", rx.icon(tag="check", size=14, color=rx.color("green", 10))),
+        ("error", rx.icon(tag="circle_alert", size=14, color=rx.color("red", 10))),
+        ("warning", rx.icon(tag="triangle_alert", size=14, color=rx.color("amber", 10))),
+        rx.icon(tag="circle", size=14, color=rx.color("gray", 8)),
+    )
+
+    return rx.hstack(
+        rx.box(status_icon, min_width="18px", padding_top="2px"),
+        rx.vstack(
+            rx.text(item["title"], size="2", weight="medium", color=rx.color("gray", 12), line_height="1.25"),
+            rx.cond(
+                item["subtitle"] != "",
+                rx.text(item["subtitle"], size="1", color=rx.color("gray", 10)),
+                rx.fragment(),
+            ),
             spacing="1",
-            align_items="center",
+            align_items="start",
+            width="100%",
         ),
-        variant="soft",
-        size="1",
-        radius="full",
+        spacing="3",
+        align_items="start",
+        width="100%",
+        padding="11px 12px",
+        border_radius="10px",
+        border=f"1px solid {rx.color('gray', 4)}",
+        background=rx.color("gray", 1),
+        box_shadow="0 1px 2px rgba(15,23,42,0.03)",
     )
 
 
-def render_source_card(source: dict[str, Any]) -> rx.Component:
-    """Render a single source as a card with favicon."""
+def render_query_row(query: dict[str, Any]) -> rx.Component:
+    status_icon = rx.match(
+        query["status"],
+        ("active", rx.spinner(size="1", color=rx.color("blue", 9))),
+        ("cancelled", rx.icon(tag="x", size=13, color=rx.color("amber", 10))),
+        rx.icon(tag="check", size=13, color=rx.color("green", 10)),
+    )
+
     return rx.hstack(
+        rx.box(status_icon, min_width="16px"),
+        rx.text(query["text"], size="2", color=rx.color("gray", 11), line_height="1.3"),
+        spacing="3",
+        align_items="center",
+        width="100%",
+        padding="10px 12px",
+        border_radius="10px",
+        background=rx.color("gray", 1),
+        border=f"1px solid {rx.color('gray', 4)}",
+        box_shadow="0 1px 2px rgba(15,23,42,0.03)",
+    )
+
+
+def render_source_chip(source: dict[str, Any]) -> rx.Component:
+    icon_box = rx.box(
         rx.image(
             src=source["favicon"],
-            width="16px",
-            height="16px",
-            border_radius="2px",
+            width="18px",
+            height="18px",
+            border_radius="4px",
         ),
-        rx.text(source["domain"], size="1", weight="medium"),
-        spacing="2",
+        width=["32px", "30px", "28px"],
+        height=["32px", "30px", "28px"],
+        display="flex",
         align_items="center",
-        padding="4px 8px",
-        border_radius="6px",
-        background=rx.color("gray", 3),
-        cursor="pointer",
-        _hover={"background": rx.color("gray", 4)},
+        justify_content="center",
+        border_radius="8px",
+        border=f"1px solid {rx.color('gray', 5)}",
+        background=rx.color("gray", 1),
+        _hover={
+            "opacity": "0.88",
+            "border": f"1px solid {rx.color('blue', 7)}",
+            "transform": "translateY(-1px)",
+            "box-shadow": "0 4px 12px rgba(29,78,216,0.14)",
+        },
+        transition="opacity 150ms ease, border 150ms ease, transform 150ms ease, box-shadow 150ms ease",
     )
 
+    clickable_chip = rx.cond(
+        source.get("url", "") != "",
+        rx.link(icon_box, href=source["url"], is_external=True, cursor="pointer"),
+        icon_box,
+    )
 
-def render_research_event(event: dict[str, Any]) -> rx.Component:
-    """Render a single research event in Perplexity style."""
+    return rx.tooltip(clickable_chip, content=source["domain"])
+
+
+def render_enrichment_overlay() -> rx.Component:
     return rx.box(
-        rx.match(
-            event["phase"],
-            # Thinking phase - conditional spinner (active) or static icon (done)
-            (
-                "thinking",
+        rx.box(
+            rx.vstack(
                 rx.hstack(
-                    rx.cond(
-                        event["is_active"],
-                        rx.spinner(size="1"),
-                        rx.icon(tag="minus", size=14, color=rx.color("gray", 8)),
-                    ),
-                    rx.text(
-                        event["message"],
-                        size="1",
-                        style={"font-style": "italic"},
-                        color=rx.color("gray", 11),
-                    ),
-                    spacing="2",
-                    align_items="center",
-                ),
-            ),
-            # Searching phase - header + query pills
-            (
-                "searching",
-                rx.vstack(
                     rx.hstack(
-                        rx.text(
-                            "SEARCHING",
-                            size="1",
-                            weight="bold",
-                            color=rx.color("gray", 9),
-                            style={"text-transform": "uppercase", "letter-spacing": "0.05em"},
+                        rx.box(
+                            rx.spinner(
+                                size="3",
+                                color=rx.color("sky", 8),
+                                loading=State.overlay_running,
+                            ),
+                            rx.box(
+                                rx.spinner(
+                                    size="2",
+                                    color=rx.color("blue", 9),
+                                    loading=State.overlay_running,
+                                ),
+                                position="absolute",
+                                left="50%",
+                                top="50%",
+                                transform="translate(-50%, -50%)",
+                            ),
+                            width=["34px", "36px", "38px"],
+                            height=["34px", "36px", "38px"],
+                            display="flex",
+                            align_items="center",
+                            justify_content="center",
+                            position="relative",
                         ),
-                        rx.badge(event["query_count"], variant="soft", size="1", radius="full"),
-                        spacing="2",
+                        rx.vstack(
+                            rx.heading("Enriching entire table...", size="6"),
+                            rx.text(
+                                State.overlay_phase_label,
+                                size="2",
+                                color=rx.color("gray", 10),
+                            ),
+                            spacing="1",
+                            align_items="start",
+                        ),
+                        spacing="3",
                         align_items="center",
                     ),
-                    rx.text(
-                        event["queries_preview"],
-                        size="1",
-                        color=rx.color("gray", 10),
-                        style={"word-break": "break-word"},
+                    rx.spacer(),
+                    rx.badge(
+                        State.session_company_progress_label,
+                        radius="full",
+                        variant="surface",
+                        style={
+                            "background": "#E0F2FE",
+                            "color": "#0369A1",
+                            "border": "1px solid #BAE6FD",
+                            "font-weight": "600",
+                            "padding": "3px 10px",
+                        },
                     ),
-                    spacing="2",
-                    align_items="start",
+                    rx.button(
+                        rx.icon(tag="x", size=16),
+                        on_click=cast(rx.EventHandler[[]], State.close_overlay),
+                        variant="ghost",
+                        size="3",
+                        cursor="pointer",
+                        aria_label="Close enrichment overlay",
+                        min_width=["34px", "34px", "32px"],
+                    ),
                     width="100%",
+                    align_items="start",
+                    padding_bottom="4px",
                 ),
-            ),
-            # Reading phase - header with count + source cards grid
-            (
-                "reading",
-                rx.vstack(
-                    rx.hstack(
-                        rx.text(
-                            "READING",
-                            size="1",
-                            weight="bold",
-                            color=rx.color("gray", 9),
-                            style={"text-transform": "uppercase", "letter-spacing": "0.05em"},
+                rx.box(
+                    rx.vstack(
+                        rx.hstack(
+                            rx.text("Sources", size="1", weight="medium", color=rx.color("gray", 10)),
+                            rx.spacer(),
+                            rx.cond(
+                                State.source_overflow_count > 0,
+                                rx.badge(
+                                    "+" + State.source_overflow_count.to_string(),
+                                    radius="full",
+                                    variant="surface",
+                                    style={
+                                        "background": "#EFF6FF",
+                                        "color": "#1D4ED8",
+                                        "border": "1px solid #DBEAFE",
+                                        "font-weight": "500",
+                                    },
+                                ),
+                                rx.fragment(),
+                            ),
+                            width="100%",
                         ),
-                        rx.badge(
-                            event["source_count"],
-                            variant="solid",
-                            size="1",
-                            radius="full",
+                        rx.hstack(
+                            rx.foreach(State.visible_sources, render_source_chip),
+                            width="100%",
+                            wrap="wrap",
+                            spacing=rx.breakpoints(initial="1", sm="2", lg="2"),
+                            align_items="center",
                         ),
                         spacing="2",
-                        align_items="center",
-                    ),
-                    rx.flex(
-                        rx.text(
-                            event["sources_preview"],
-                            size="1",
-                            color=rx.color("gray", 10),
-                            style={"word-break": "break-word"},
-                        ),
                         width="100%",
                     ),
-                    spacing="2",
-                    align_items="start",
+                    width="100%",
+                    padding=["9px 10px", "10px 12px", "10px 12px"],
+                    border_radius="12px",
+                    border=f"1px solid {rx.color('gray', 4)}",
+                    background="linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%)",
+                    box_shadow="inset 0 1px 0 rgba(255,255,255,0.65)",
+                ),
+                rx.grid(
+                    rx.box(
+                        rx.vstack(
+                            rx.hstack(
+                                rx.text("Research Progress", size="3", weight="bold"),
+                                rx.spacer(),
+                                rx.badge(
+                                    State.progress_item_count,
+                                    radius="full",
+                                    variant="surface",
+                                    style={
+                                        "background": "#EEF2FF",
+                                        "color": "#3730A3",
+                                        "border": "1px solid #E0E7FF",
+                                        "font-weight": "600",
+                                    },
+                                ),
+                                width="100%",
+                            ),
+                            rx.vstack(
+                                rx.foreach(State.filtered_progress_items, render_progress_item),
+                                width="100%",
+                                spacing="2",
+                                align_items="start",
+                            ),
+                            width="100%",
+                            align_items="start",
+                            spacing="3",
+                        ),
+                        border=f"1px solid {rx.color('gray', 4)}",
+                        background=rx.color("gray", 2),
+                        border_radius="12px",
+                        padding="14px",
+                        min_height=["220px", "280px", "420px"],
+                        max_height=["34vh", "44vh", "60vh"],
+                        overflow_y="auto",
+                        scrollbar_gutter="stable",
+                        padding_right=["8px", "10px", "12px"],
+                    ),
+                    rx.box(
+                        rx.vstack(
+                            rx.hstack(
+                                rx.text("Active Queries", size="3", weight="bold"),
+                                rx.badge(
+                                    State.overlay_query_panel_count,
+                                    radius="full",
+                                    variant="surface",
+                                    style={
+                                        "background": "#DBEAFE",
+                                        "color": "#1D4ED8",
+                                        "border": "1px solid #BFDBFE",
+                                        "font-weight": "600",
+                                        "padding": "2px 10px",
+                                    },
+                                ),
+                                width="100%",
+                                spacing="2",
+                                align_items="center",
+                            ),
+                            rx.cond(
+                                State.overlay_query_panel_count > 0,
+                                rx.vstack(
+                                    rx.foreach(State.ordered_active_queries, render_query_row),
+                                    width="100%",
+                                    spacing="2",
+                                    align_items="start",
+                                ),
+                                rx.box(
+                                    rx.text(
+                                        "No active queries yet...",
+                                        size="2",
+                                        color=rx.color("gray", 10),
+                                    ),
+                                    width="100%",
+                                    padding="12px",
+                                    border_radius="8px",
+                                    border=f"1px dashed {rx.color('gray', 5)}",
+                                    background=rx.color("gray", 1),
+                                ),
+                            ),
+                            width="100%",
+                            align_items="start",
+                            spacing="3",
+                        ),
+                        border=f"1px solid {rx.color('gray', 4)}",
+                        background=rx.color("gray", 2),
+                        border_radius="12px",
+                        padding="14px",
+                        min_height=["220px", "280px", "420px"],
+                        max_height=["34vh", "44vh", "60vh"],
+                        overflow_y="auto",
+                        scrollbar_gutter="stable",
+                        padding_right=["8px", "10px", "12px"],
+                    ),
+                    columns=rx.breakpoints(initial="1fr", lg="1fr 1fr"),
+                    gap=["12px", "14px", "14px"],
                     width="100%",
                 ),
+                spacing="3",
+                align_items="start",
+                width="100%",
             ),
-            # Analyzing phase - conditional spinner (active) or static icon (done)
-            (
-                "analyzing",
-                rx.hstack(
-                    rx.cond(
-                        event["is_active"],
-                        rx.spinner(size="1"),
-                        rx.icon(tag="minus", size=14, color=rx.color("gray", 8)),
-                    ),
-                    rx.text(
-                        event["message"],
-                        size="1",
-                        style={"font-style": "italic"},
-                        color=rx.color("gray", 11),
-                    ),
-                    spacing="2",
-                    align_items="center",
-                ),
-            ),
-            # Complete phase
-            (
-                "complete",
-                rx.hstack(
-                    rx.icon(tag="check_check", size=14, color=rx.color("green", 9)),
-                    rx.text(
-                        event["message"],
-                        size="1",
-                        weight="medium",
-                        color=rx.color("green", 11),
-                    ),
-                    spacing="2",
-                    align_items="center",
-                ),
-            ),
-            # Default fallback
-            rx.text(event["message"], size="1"),
+            width=["95vw", "92vw", "min(1120px, 92vw)"],
+            max_height=["94vh", "92vh", "90vh"],
+            overflow_y="auto",
+            overflow_x="hidden",
+            border_radius="20px",
+            border=f"1px solid {rx.color('gray', 5)}",
+            background="linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%)",
+            box_shadow="0 28px 90px rgba(2,6,23,0.24)",
+            padding=["14px", "18px", "20px"],
+            transform=rx.cond(State.overlay_visible, "translateY(0)", "translateY(10px)"),
+            transition="transform 180ms ease, opacity 180ms ease",
         ),
-        width="100%",
-        padding_y="6px",
-        border_bottom=f"1px solid {rx.color('gray', 3)}",
+        position="fixed",
+        inset="0",
+        z_index="2200",
+        display="flex",
+        align_items="center",
+        justify_content="center",
+        background="rgba(15, 23, 42, 0.42)",
+        backdrop_filter="blur(4px)",
+        padding=["8px", "12px", "12px"],
+        opacity=rx.cond(State.overlay_visible, "1", "0"),
+        visibility=rx.cond(State.overlay_visible, "visible", "hidden"),
+        pointer_events=rx.cond(State.overlay_visible, "auto", "none"),
+        transition="opacity 180ms ease",
     )
 
 
@@ -179,243 +344,24 @@ def dark_mode_toggle() -> rx.Component:
     )
 
 
-def resize_handle() -> rx.Component:
+def project_header() -> rx.Component:
     return rx.box(
-        rx.box(
-            width="1px",
-            height="100%",
-            border_radius="full",
-            background=rx.color("gray", 7),
-        ),
-        display=["none", "none", "flex"],
-        width="12px",
-        min_width="12px",
-        align_self="stretch",
-        align_items="center",
-        justify_content="center",
-        cursor="col-resize",
-        background="transparent",
-        _hover={"background": rx.color("gray", 3)},
-        _active={"background": rx.color("blue", 3)},
-        on_mouse_down=rx.call_script(
-            """
-            (() => {
-                const panel = document.getElementById('sidebar-panel');
-                if (!panel) return null;
-
-                if (window.matchMedia('(max-width: 1024px)').matches) {
-                    return parseInt(getComputedStyle(panel).width, 10) || 340;
-                }
-
-                const min = 280;
-                const max = 520;
-
-                const setWidth = (clientX) => {
-                    const nextWidth = Math.min(max, Math.max(min, Math.round(clientX)));
-                    panel.style.width = `${nextWidth}px`;
-                    return nextWidth;
-                };
-
-                document.body.style.cursor = 'col-resize';
-                document.body.style.userSelect = 'none';
-
-                return new Promise((resolve) => {
-                    const onMove = (moveEvent) => {
-                        setWidth(moveEvent.clientX);
-                    };
-
-                    const onUp = (upEvent) => {
-                        const finalWidth = setWidth(upEvent.clientX);
-                        window.removeEventListener('mousemove', onMove);
-                        window.removeEventListener('mouseup', onUp);
-                        document.body.style.cursor = '';
-                        document.body.style.userSelect = '';
-                        resolve(finalWidth);
-                    };
-
-                    window.addEventListener('mousemove', onMove);
-                    window.addEventListener('mouseup', onUp);
-                });
-            })()
-            """,
-            callback=cast(rx.EventHandler[[Any]], State.set_sidebar_width),
-        ),
-        aria_label="Resize sidebar",
-        role="separator",
-    )
-
-
-def sidebar():
-    return rx.cond(
-        State.sidebar_open,
-        rx.box(
-            rx.hstack(
-                rx.vstack(
-                    rx.hstack(
-                        rx.image(
-                            src="/zurich-logo-update.png",
-                            alt="Zurich Logo",
-                            height="35px",
-                            width="auto",
-                        ),
-                        rx.spacer(),
-                        rx.button(
-                            rx.icon(tag="x", size=20),
-                            on_click=cast(rx.EventHandler[[]], State.toggle_sidebar),
-                            variant="ghost",
-                            size="2",
-                            display=["flex", "flex", "none"],
-                            cursor="pointer",
-                            aria_label="Close sidebar",
-                        ),
-                        width="100%",
-                        align_items="center",
-                        margin_bottom="0.5rem",
-                    ),
-                    rx.heading("Project Overview", size="5", margin_bottom="0.5rem"),
-                    rx.text(
-                        "Agentic LangGraph Researcher",
-                        weight="bold",
-                        margin_bottom="0.25rem",
-                    ),
-                    rx.text(
-                        "This tool automates the process of enriching company profiles using AI agents.",
-                        size="2",
-                        margin_bottom="0.5rem",
-                        color=rx.color("gray", 11),
-                    ),
-                    rx.text("Powered by LangGraph & Tavily", size="1", color=rx.color("gray", 10)),
-                    rx.divider(margin_y="0.5rem"),
-                    rx.heading("Research Logs", size="3"),
-                    rx.hstack(
-                        rx.button(
-                            "Clear Search",
-                            on_click=cast(rx.EventHandler[[]], State.clear_search),
-                            variant="soft",
-                            size="1",
-                            color_scheme="tomato",
-                            cursor="pointer",
-                        ),
-                        rx.button(
-                            "Reset Session",
-                            on_click=cast(rx.EventHandler[[]], State.reset_session_state),
-                            variant="outline",
-                            size="1",
-                            cursor="pointer",
-                            disabled=State.is_processing,
-                        ),
-                        width="100%",
-                        spacing="2",
-                        align_items="center",
-                    ),
-                    rx.cond(
-                        State.undo_visible,
-                        rx.hstack(
-                            rx.text("Logs cleared.", size="1", weight="medium"),
-                            rx.spacer(),
-                            rx.button(
-                                State.undo_button_label,
-                                on_click=cast(rx.EventHandler[[]], State.undo_clear_search),
-                                size="1",
-                                variant="surface",
-                                cursor="pointer",
-                            ),
-                            width="100%",
-                            padding="8px",
-                            border_radius="8px",
-                            border=f"1px solid {rx.color('blue', 6)}",
-                            background=rx.color("blue", 2),
-                            role="status",
-                            aria_live="polite",
-                        ),
-                        rx.fragment(),
-                    ),
-                    rx.box(
-                        rx.vstack(
-                            # Show current company being processed
-                            rx.cond(
-                                State.is_processing & (State.current_company != ""),
-                                rx.hstack(
-                                    rx.spinner(size="1"),
-                                    rx.text(
-                                        State.current_company,
-                                        size="2",
-                                        weight="bold",
-                                    ),
-                                    spacing="2",
-                                    align_items="center",
-                                    padding="8px",
-                                    background=rx.color("blue", 2),
-                                    border_radius="6px",
-                                    width="100%",
-                                    margin_bottom="8px",
-                                ),
-                                rx.fragment(),
-                            ),
-                            # Render structured research events
-                            rx.foreach(
-                                State.filtered_research_events,
-                                render_research_event,
-                            ),
-                            align_items="start",
-                            spacing="1",
-                            width="100%",
-                            id="log-content",
-                        ),
-                        id="log-viewer",
-                        width="100%",
-                        padding="0.75rem",
-                        border="1px solid",
-                        border_color=rx.color("gray", 4),
-                        border_radius="md",
-                        background=rx.color("gray", 1),
-                        overflow_y="auto",
-                        min_height="50vh",
-                        max_height="60vh",
-                        on_mount=rx.call_script(
-                            """
-                            const logViewer = document.getElementById('log-viewer');
-                            const logContent = document.getElementById('log-content');
-                            if (logViewer && logContent) {
-                                const observer = new MutationObserver(() => {
-                                    logViewer.scrollTop = logViewer.scrollHeight;
-                                });
-                                observer.observe(logContent, {
-                                    childList: true,
-                                    subtree: true,
-                                    characterData: true
-                                });
-                            }
-                            """
-                        ),
-                    ),
-                    align_items="start",
-                    spacing="4",
-                    width="100%",
-                    padding_right="12px",
-                ),
-                resize_handle(),
-                align_items="stretch",
-                spacing="0",
-                min_height="100%",
-                width="100%",
+        rx.hstack(
+            rx.image(
+                src="/zurich-logo-update.png",
+                alt="Zurich Logo",
+                height="30px",
+                width="auto",
             ),
-            id="sidebar-panel",
-            padding="2rem",
-            height=["100vh", "100vh", "auto"],
-            min_height="100vh",
-            width=["100%", "360px", State.sidebar_width_storage + "px"],
-            min_width=["100%", "360px", "280px"],
-            max_width=["100%", "420px", "520px"],
-            display="block",
-            position=["fixed", "fixed", "sticky"],
-            align_self="stretch",
-            top="0",
-            left="0",
-            z_index="1000",
-            background=rx.color("gray", 1),
+            rx.spacer(),
+            dark_mode_toggle(),
+            width="100%",
+            align_items="center",
         ),
-        rx.box(width="0"),  
+        width="100%",
+        background=rx.color("gray", 1),
+        padding_x=["1rem", "1.5rem", "2rem"],
+        padding_y="0.7rem",
     )
 
 
@@ -435,7 +381,7 @@ def table_row(company: dict, index: int):
             rx.input(
                 value=company["Nama Perusahaan"],
                 on_change=_name_change_handler(index),
-                placeholder="Enter company name...",
+                placeholder="Company Name",
                 width="100%",
                 style={
                     "word-break": "break-word",
@@ -460,44 +406,123 @@ def table_row(company: dict, index: int):
     )
 
 
-def main_content():
+def main_content() -> rx.Component:
     return rx.box(
         rx.vstack(
-            rx.hstack(
-                rx.heading("👾 AI Lead Enrichment", size="7"),
-                rx.spacer(),
-                dark_mode_toggle(),
+            rx.vstack(
+                rx.heading("👾ZGTI AI Lead Enrichment", size="7", text_align="left"),
+                rx.vstack(
+                    rx.text(
+                        "This tool automates the process of enriching company profiles using AI agents.",
+                        size="2",
+                        color=rx.color("gray", 10),
+                        text_align="left",
+                        max_width="680px",
+                    ),
+                    rx.text(
+                        "Powered by LangGraph & Tavily",
+                        size="1",
+                        weight="medium",
+                        color=rx.color("gray", 9),
+                        text_align="left",
+                    ),
+                    spacing="2",
+                    align_items="center",
+                ),
+                spacing="4",
                 width="100%",
                 align_items="center",
             ),
-            rx.text("Input company names below to automatically enrich their profiles."),
-
-            # Progress Section (di atas table)
+            rx.cond(
+                State.undo_visible,
+                rx.hstack(
+                    rx.text("Logs cleared.", size="1", weight="medium"),
+                    rx.spacer(),
+                    rx.button(
+                        State.undo_button_label,
+                        on_click=cast(rx.EventHandler[[]], State.undo_clear_search),
+                        size="1",
+                        variant="surface",
+                        cursor="pointer",
+                    ),
+                    width="100%",
+                    padding="8px",
+                    border_radius="8px",
+                    border=f"1px solid {rx.color('blue', 6)}",
+                    background=rx.color("blue", 2),
+                    role="status",
+                    aria_live="polite",
+                ),
+                rx.fragment(),
+            ),
             rx.cond(
                 State.is_processing,
                 rx.box(
                     rx.text(State.status_log, size="2", margin_bottom="0.5rem"),
                     rx.progress(value=State.progress, width="100%"),
                     width="100%",
-                    padding_y="1rem",
+                    padding_y="0.75rem",
                 ),
+                rx.fragment(),
             ),
-
-            # Data Table using Radix Table
             rx.box(
+                rx.hstack(
+                    rx.button(
+                        "View Last Log",
+                        on_click=cast(rx.EventHandler[[]], State.reopen_last_enrichment_log),
+                        variant="ghost",
+                        size="2",
+                        cursor="pointer",
+                        color_scheme="blue",
+                    ),
+                    rx.button(
+                        "Reset Session",
+                        on_click=cast(rx.EventHandler[[]], State.reset_session_state),
+                        variant="soft",
+                        color_scheme="gray",
+                        size="2",
+                        cursor="pointer",
+                        disabled=State.is_processing,
+                    ),
+                    rx.spacer(),
+                    rx.hstack(
+                        rx.button(
+                            rx.icon(tag="file_spreadsheet", size=16),
+                            on_click=cast(rx.EventHandler[[]], State.export_excel),
+                            variant="surface",
+                            size="2",
+                            cursor="pointer",
+                            aria_label="Export Excel",
+                            title="Export Excel",
+                        ),
+                        rx.button(
+                            rx.icon(tag="file_text", size=16),
+                            on_click=cast(rx.EventHandler[[]], State.export_pdf),
+                            variant="surface",
+                            size="2",
+                            cursor="pointer",
+                            aria_label="Export PDF",
+                            title="Export PDF",
+                        ),
+                        spacing="2",
+                    ),
+                    width="100%",
+                    padding="8px 8px 10px 8px",
+                    align_items="center",
+                ),
                 rx.table.root(
                     rx.table.header(
                         rx.table.row(
-                            table_header_cell("Nama Perusahaan"),
-                            table_header_cell("Sektor"),
-                            table_header_cell("Alamat"),
-                            table_header_cell("Kontak"),
-                            table_header_cell("Potensi Polis"),
-                            table_header_cell("Jml Karyawan"),
-                            table_header_cell("Deskripsi"),
-                            table_header_cell("Cabang"),
-                            table_header_cell("PIC"),
-                            table_header_cell("Keuangan"),
+                            table_header_cell("Company Name"),
+                            table_header_cell("Sector"),
+                            table_header_cell("Address"),
+                            table_header_cell("Contact Info"),
+                            table_header_cell("Insurance Potential"),
+                            table_header_cell("Employee Count"),
+                            table_header_cell("Description"),
+                            table_header_cell("Branches"),
+                            table_header_cell("Company PIC"),
+                            table_header_cell("Financial Report"),
                         ),
                     ),
                     rx.table.body(
@@ -511,81 +536,58 @@ def main_content():
                 ),
                 overflow_x="auto",
                 width="100%",
-                border_radius="md",
+                background=rx.color("gray", 1),
             ),
-
-            # ===== NEW: Action Bar PINDAH KE BAWAH =====
             rx.hstack(
                 rx.button(
-                    "Add Row",
+                    rx.hstack(rx.icon(tag="plus", size=14), rx.text("Add Row"), spacing="2", align_items="center"),
                     on_click=cast(rx.EventHandler[[]], State.add_row),
-                    variant="outline",
+                    size="2",
                     cursor="pointer",
+                    background="#1E4E8C",
+                    color="white",
+                    _hover={"background": "#173F72"},
                 ),
                 rx.button(
-                    "Start Enrichment",
+                    "Enrich Data",
                     on_click=cast(rx.EventHandler[[]], State.run_enrichment),
                     loading=State.is_processing,
-                    color_scheme="jade",
+                    size="2",
                     cursor="pointer",
-                ),
-                rx.spacer(),
-                rx.button(
-                    "Export CSV",
-                    on_click=cast(rx.EventHandler[[]], State.export_csv),
-                    variant="soft",
-                    cursor="pointer",
-                    color_mode="light"
+                    background="#1E4E8C",
+                    color="white",
+                    _hover={"background": "#173F72"},
                 ),
                 width="100%",
-                padding_y="1rem",
-                margin_top="1rem",
+                spacing="2",
+                align_items="center",
+                padding_top="0.25rem",
             ),
-
             align_items="start",
             width="100%",
-            padding="2rem",
-            max_width=rx.cond(State.sidebar_open, "1200px", "100%"),
+            max_width="1360px",
             margin_x="auto",
+            padding_x=["1rem", "1.5rem", "2rem"],
+            padding_y="1.05rem",
+            spacing="4",
         ),
         width="100%",
-        min_height="100vh",
     )
 
 
-def index():
-    return rx.hstack(
-        sidebar(),
-        rx.box(
-            rx.vstack(
-                rx.hstack(
-                    rx.button(
-                        rx.icon(tag="menu", size=20),
-                        on_click=cast(rx.EventHandler[[]], State.toggle_sidebar),
-                        variant="ghost",
-                        size="2",
-                        cursor="pointer",
-                        aria_label="Open sidebar",
-                    ),
-                    rx.spacer(),
-                    width="100%",
-                    align_items="center",
-                    padding="1rem",
-                    padding_right="0",
-                    margin_bottom="0.5rem",
-                ),
-                main_content(),
-                width="100%",
-                height="100%",
-                align_items="start",
-            ),
+def index() -> rx.Component:
+    return rx.box(
+        rx.vstack(
+            project_header(),
+            main_content(),
             width="100%",
-            min_height="100vh",
+            align_items="stretch",
+            spacing="0",
         ),
+        render_enrichment_overlay(),
         width="100%",
         min_height="100vh",
-        align_items="stretch",
-        on_mount=cast(rx.EventHandler[[]], State.hydrate_sidebar_width),
+        background=rx.color("gray", 1),
     )
 
 

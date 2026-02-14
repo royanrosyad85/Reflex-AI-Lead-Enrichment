@@ -8,6 +8,8 @@ A web application built with Reflex that automates the process of enriching comp
 - **AI-Powered Research**: Uses LangGraph agents with Tavily search and Azure OpenAI for intelligent data gathering
 - **Interactive Table Interface**: Easy-to-use web interface for managing company data
 - **CSV Export**: Export enriched data to CSV for further analysis or CRM integration
+- **Excel Export**: Download enriched table as `.xlsx`
+- **PDF Export**: Download enriched table summary as `.pdf`
 - **Progress Tracking**: Real-time status updates during enrichment process
 - **Structured Research Timeline**: Perplexity-style `thinking -> searching -> reading -> complete` events in the sidebar
 - **Deterministic Policy Mapping**: `Potensi Polis` is derived from `guidline.md` rules instead of direct web extraction
@@ -58,7 +60,7 @@ A web application built with Reflex that automates the process of enriching comp
 
 4. Click "Start Enrichment" to begin the AI-powered research process
 
-5. Export results to CSV when complete
+5. Export results to CSV, Excel, or PDF when complete
 
 ## Research Event Stream Contract
 
