@@ -233,7 +233,7 @@ def curate_candidate_urls(company_name: str, results: list, min_score: float = 0
         seen.add(normalized_url)
         curated_urls.append(normalized_url)
 
-    return curated_urls
+    return curated_urls[:20]
 
 def build_search_queries(company_name: str, missing_fields: list) -> list:
     """Build dual-language field-aware queries and preserve insertion order."""
@@ -337,7 +337,7 @@ class ResearchPipeline:
             )
             return response.get("results", []) if isinstance(response, dict) else []
         except asyncio.TimeoutError:
-            logger.error("Extraction from curated URLs timed out")
+            logger.warning("Extraction from curated URLs timed out")
             return []
         except Exception as e:
             logger.error(f"Extraction from curated URLs failed: {e}")
