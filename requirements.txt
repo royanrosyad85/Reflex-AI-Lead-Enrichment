@@ -4,3 +4,5 @@ openai
 reflex==0.8.26
 langgraph
 pandas
+openpyxl
+reportlab
