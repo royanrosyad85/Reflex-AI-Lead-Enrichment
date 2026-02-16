@@ -10,5 +10,5 @@ from .ui.components.overlay import (
 from .ui.components.table import table_header_cell, table_row
 from .ui.page_index import index, main_content
 
-app = rx.App()
+app = rx.App(stylesheets=["/fonts/fonts.css"])
 app.add_page(index, title="AI Lead Enrichment", image="zurich-logo-update.png")

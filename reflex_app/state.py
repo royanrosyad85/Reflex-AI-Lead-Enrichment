@@ -23,22 +23,29 @@ from .enrichment_overlay_mapper import (
 load_dotenv()
 
 
+COMPANY_FIELDS: tuple[str, ...] = (
+    "Nama Perusahaan",
+    "Sektor Perusahaan",
+    "Alamat",
+    "Kontak",
+    "Potensi Polis",
+    "Jumlah Karyawan",
+    "Short Description",
+    "Kantor Cabang",
+    "PIC Perusahaan",
+    "Laporan Keuangan",
+)
+
+
+def _empty_company(row_id: str | None = None) -> Dict[str, str]:
+    return {
+        "_row_id": row_id or uuid.uuid4().hex,
+        **{field: "" for field in COMPANY_FIELDS},
+    }
+
+
 def _default_companies() -> List[Dict[str, str]]:
-    return [
-        {
-            "Nama Perusahaan": "",
-            "Sektor Perusahaan": "",
-            "Alamat": "",
-            "Kontak": "",
-            "Potensi Polis": "",
-            "Jumlah Karyawan": "",
-            "Short Description": "",
-            "Kantor Cabang": "",
-            "PIC Perusahaan": "",
-            "Laporan Keuangan": "",
-        }
-        for _ in range(5)
-    ]
+    return [_empty_company() for _ in range(5)]
 
 
 class ResearchSession(TypedDict):
@@ -87,16 +94,83 @@ class State(rx.State):
     undo_seconds_left: int = 0
     undo_token: int = 0
 
-    def add_row(self):
-        self.companies = self.companies + [{
-            "Nama Perusahaan": "", "Sektor Perusahaan": "", "Alamat": "", "Kontak": "",
-            "Potensi Polis": "", "Jumlah Karyawan": "", "Short Description": "",
-            "Kantor Cabang": "", "PIC Perusahaan": "", "Laporan Keuangan": ""
-        }]
+    # Header Reposition State
+    header_reposition_mode: bool = False
+    header_position: int = 35
+    temp_header_position: int = 35
+    header_hovered: bool = False
 
-    def update_company_name(self, value: str, index: int):
+    def enter_reposition_mode(self):
+        self.header_reposition_mode = True
+        self.temp_header_position = self.header_position
+
+    def save_reposition(self):
+        self.header_position = self.temp_header_position
+        self.header_reposition_mode = False
+
+    def cancel_reposition(self):
+        self.temp_header_position = self.header_position
+        self.header_reposition_mode = False
+
+    def set_temp_header_position(self, value: int | float | str | list[float] | tuple[float, ...]):
+        raw_value: int | float | str
+        if isinstance(value, (list, tuple)):
+            if not value:
+                return
+            raw_value = value[0]
+        else:
+            raw_value = value
+
+        try:
+            parsed_value = int(float(raw_value))
+        except (TypeError, ValueError):
+            return
+
+        self.temp_header_position = max(0, min(100, parsed_value))
+
+    def set_header_hovered(self, hovered: bool):
+        self.header_hovered = hovered
+
+    def _ensure_company_row_ids(self):
+        normalized: List[Dict[str, str]] = []
+        changed = False
+        for company in self.companies:
+            row_id = str(company.get("_row_id", "")).strip()
+            if row_id:
+                normalized.append(company)
+                continue
+            normalized.append({"_row_id": uuid.uuid4().hex, **company})
+            changed = True
+        if changed:
+            self.companies = normalized
+
+    def _find_company_index_by_row_id(self, row_id: str) -> int | None:
+        for index, company in enumerate(self.companies):
+            if str(company.get("_row_id", "")) == row_id:
+                return index
+        return None
+
+    def add_row(self):
+        self.companies = self.companies + [_empty_company()]
+
+    def delete_row(self, row_id: str):
+        if self.is_processing:
+            return
+        target_index = self._find_company_index_by_row_id(row_id)
+        if target_index is None:
+            return
+        self.companies = [
+            company for company_index, company in enumerate(self.companies) if company_index != target_index
+        ]
+
+    def update_company_name(self, value: str, row_id: str):
+        if self.is_processing:
+            return
+        target_index = self._find_company_index_by_row_id(row_id)
+        if target_index is None:
+            return
         new_companies = list(self.companies)
-        new_companies[index] = {**new_companies[index], "Nama Perusahaan": value}
+        new_companies[target_index] = {**new_companies[target_index], "Nama Perusahaan": value}
         self.companies = new_companies
 
     def set_log_query(self, value: str):
@@ -137,18 +211,22 @@ class State(rx.State):
     def finish_research_session(self):
         if self.research_session is None:
             return
-        completed = self.research_session.get("completed_companies", 0)
-        total = self.research_session.get("total_companies", 0)
+        session = self.research_session
+        completed = session.get("completed_companies", 0)
+        total = session.get("total_companies", 0)
         self.last_session_summary = {
-            "session_id": self.research_session.get("session_id", ""),
+            "session_id": session.get("session_id", ""),
             "completed_companies": completed,
             "total_companies": total,
             "ended_at": time.time(),
             "status_text": f"Last run {completed}/{total} completed",
         }
         self.research_session = {
-            **self.research_session,
+            "session_id": session["session_id"],
             "is_running": False,
+            "started_at": session["started_at"],
+            "total_companies": session["total_companies"],
+            "completed_companies": session["completed_companies"],
             "current_company": "",
         }
         self.active_queries = [
@@ -249,11 +327,15 @@ class State(rx.State):
         ]
 
     def mark_company_completed(self, company: str):
-        if self.research_session is None:
+        session = self.research_session
+        if session is None:
             return
-        completed = self.research_session.get("completed_companies", 0) + 1
+        completed = session.get("completed_companies", 0) + 1
         self.research_session = {
-            **self.research_session,
+            "session_id": session["session_id"],
+            "is_running": session["is_running"],
+            "started_at": session["started_at"],
+            "total_companies": session["total_companies"],
             "completed_companies": completed,
             "current_company": company,
         }
@@ -458,8 +540,14 @@ class State(rx.State):
         return f"Undo ({self.undo_seconds_left}s)"
 
     async def run_enrichment(self):
+        self._ensure_company_row_ids()
+
         # Filter companies that have names
-        targets = [(i, c["Nama Perusahaan"]) for i, c in enumerate(self.companies) if c["Nama Perusahaan"].strip()]
+        targets = [
+            (str(c.get("_row_id", "")), c["Nama Perusahaan"])
+            for c in self.companies
+            if c["Nama Perusahaan"].strip() and str(c.get("_row_id", "")).strip()
+        ]
 
         if not targets:
             self.status_log = "Please enter at least one company name."
@@ -506,7 +594,26 @@ class State(rx.State):
             pipeline = ResearchPipeline(tavily_client, azure_client, str(deployment))
 
             total = len(targets)
-            for idx, (table_index, company_name) in enumerate(targets):
+            for idx, (row_id, company_name) in enumerate(targets):
+                table_index = self._find_company_index_by_row_id(row_id)
+                if table_index is None:
+                    self.status_log = f"Skipping {company_name} (row was removed)..."
+                    self.append_log(self.status_log)
+                    self.append_progress_item(
+                        {
+                            "id": f"{company_name}-removed-{int(time.time() * 1000)}",
+                            "phase": "complete",
+                            "title": self.status_log,
+                            "subtitle": "Row was removed before enrichment started.",
+                            "status": "cancelled",
+                            "timestamp": time.time(),
+                        }
+                    )
+                    self.mark_company_completed(company_name)
+                    self.progress = int((idx + 1) / total * 100)
+                    yield
+                    continue
+
                 # Check if already enriched (simple check: if Sektor Perusahaan is not empty)
                 current_row = self.companies[table_index]
                 sektor = current_row.get("Sektor Perusahaan")
@@ -530,8 +637,19 @@ class State(rx.State):
 
                 self.status_log = f"Processing {idx + 1}/{total}: {company_name}..."
                 self.append_log(self.status_log)
-                if self.research_session is not None:
-                    self.research_session = {**self.research_session, "current_company": company_name}
+                session = self.research_session
+                if session is not None:
+                    self.research_session = cast(
+                        ResearchSession,
+                        {
+                            "session_id": session["session_id"],
+                            "is_running": session["is_running"],
+                            "started_at": session["started_at"],
+                            "total_companies": session["total_companies"],
+                            "completed_companies": session["completed_companies"],
+                            "current_company": company_name,
+                        },
+                    )
                 yield
 
                 try:
@@ -597,9 +715,20 @@ class State(rx.State):
                     result_dict = result_state.to_dict()
                     fields = result_dict.get("fields", {})
 
+                    # Re-find index by row_id in case table indices changed.
+                    live_index = self._find_company_index_by_row_id(row_id)
+                    if live_index is None:
+                        self.status_log = f"Skipped writing result for {company_name}: row was removed."
+                        self.append_log(self.status_log)
+                        self.finalize_company_activity(company_name, "cancelled")
+                        self.mark_company_completed(company_name)
+                        self.update_overlay_phase("error", self.active_query_count, self.overlay_source_count_hint)
+                        yield
+                        continue
+
                     # Update state - create new list to trigger reactivity
                     new_companies = list(self.companies)
-                    updated_row = dict(new_companies[table_index])
+                    updated_row = dict(new_companies[live_index])
 
                     mapping = {
                         "Sektor Perusahaan": "Sektor Perusahaan",
@@ -617,7 +746,7 @@ class State(rx.State):
                         field_data = fields.get(field_key, {})
                         updated_row[col_key] = field_data.get("value", "") if isinstance(field_data, dict) else ""
 
-                    new_companies[table_index] = updated_row
+                    new_companies[live_index] = updated_row
                     self.companies = new_companies
 
                     self.finalize_company_activity(company_name, "done")
@@ -644,8 +773,19 @@ class State(rx.State):
 
                 # Clear current company after processing (Root Cause 1 fix)
                 self.current_company = ""
-                if self.research_session is not None:
-                    self.research_session = {**self.research_session, "current_company": ""}
+                session = self.research_session
+                if session is not None:
+                    self.research_session = cast(
+                        ResearchSession,
+                        {
+                            "session_id": session["session_id"],
+                            "is_running": session["is_running"],
+                            "started_at": session["started_at"],
+                            "total_companies": session["total_companies"],
+                            "completed_companies": session["completed_companies"],
+                            "current_company": "",
+                        },
+                    )
                 # Update progress
                 self.progress = int((idx + 1) / total * 100)
                 if not self.status_log.startswith("Error processing"):
@@ -683,12 +823,12 @@ class State(rx.State):
         output = StringIO()
         if not self.companies:
             return
-       
-        fieldnames = list(self.companies[0].keys())
+        
+        fieldnames = list(COMPANY_FIELDS)
         writer = csv.DictWriter(output, fieldnames=fieldnames)
-       
+        
         writer.writeheader()
-        writer.writerows(self.companies)
+        writer.writerows([{field: row.get(field, "") for field in fieldnames} for row in self.companies])
        
         # Get CSV content
         csv_content = output.getvalue()
@@ -713,7 +853,7 @@ class State(rx.State):
         assert sheet is not None
         sheet.title = "Enrichment"
 
-        headers = list(_default_companies()[0].keys())
+        headers = list(COMPANY_FIELDS)
         sheet.append(headers)
 
         for row in self.companies:
