@@ -1,0 +1,68 @@
+@font-face {
+  font-family: "Figtree";
+  src: url("/fonts/figtree-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+:root {
+  --app-font-family: "Figtree", "Alliance No.1", "Alliance", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+
+.rt-Theme,
+.radix-themes,
+.light,
+.dark {
+  --default-font-family: var(--app-font-family);
+  --heading-font-family: var(--app-font-family);
+  --strong-font-family: var(--app-font-family);
+}
+
+body,
+.rt-Theme,
+.radix-themes,
+button,
+input,
+textarea,
+select,
+table {
+  font-family: var(--app-font-family);
+}
+
+.header-reposition-slider .rt-SliderTrack {
+  background-color: #e5e7eb;
+}
+
+.header-reposition-slider .rt-SliderRange {
+  background-color: #6b7280;
+}
+
+.header-reposition-slider .rt-SliderThumb {
+  background-color: #ffffff;
+  border: 1px solid #4b5563;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.18);
+}
+
+.header-reposition-panel {
+  background: linear-gradient(
+    155deg,
+    rgba(255, 255, 255, 0.36),
+    rgba(241, 245, 249, 0.22)
+  );
+  border: 1px solid rgba(226, 232, 240, 0.6);
+  box-shadow:
+    0 14px 30px rgba(15, 23, 42, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+}
+
+@keyframes reposition-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
