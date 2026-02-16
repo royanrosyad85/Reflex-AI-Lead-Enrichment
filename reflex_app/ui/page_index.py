@@ -12,29 +12,17 @@ def main_content() -> rx.Component:
     return rx.box(
         rx.vstack(
             rx.vstack(
-                rx.heading("👾ZGTI AI Lead Enrichment", size="7", text_align="left"),
-                rx.text("Company Enrichment Tool", size="3", weight="medium", text_align="left"),
-                rx.vstack(
-                    rx.text(
-                        "This tool automates the process of enriching company profiles using AI agents.",
-                        size="2",
-                        color=rx.color("gray", 10),
-                        text_align="left",
-                        max_width="680px",
-                    ),
-                    rx.text(
-                        "Powered by LangGraph & Tavily",
-                        size="1",
-                        weight="medium",
-                        color=rx.color("gray", 9),
-                        text_align="left",
-                    ),
-                    spacing="2",
-                    align_items="center",
+                rx.heading("👾 ZGTI AI Lead Enrichment", size="7", text_align="left"),
+                rx.text(
+                    "Company Enrichment Tool - Automates company profile enrichment using AI agents. Powered by LangGraph & Tavily.",
+                    size="3",
+                    weight="medium",
+                    text_align="left",
+                    color=rx.color("gray", 11),
                 ),
-                spacing="4",
+                spacing="3",
                 width="100%",
-                align_items="center",
+                align_items="start",
             ),
             rx.cond(
                 State.undo_visible,
@@ -89,25 +77,43 @@ def main_content() -> rx.Component:
                     ),
                     rx.spacer(),
                     rx.hstack(
-                        rx.button(
-                            rx.icon(tag="file_spreadsheet", size=16),
-                            on_click=cast(rx.EventHandler[[]], State.export_excel),
-                            variant="surface",
-                            size="2",
-                            cursor="pointer",
-                            aria_label="Export Excel",
-                            title="Export Excel",
+                        rx.tooltip(
+                            rx.image(
+                                src="/excel_icon.svg",
+                                alt="Export Excel",
+                                width="22px",
+                                height="22px",
+                                cursor="pointer",
+                                on_click=cast(rx.EventHandler[[]], State.export_excel),
+                                _hover={
+                                    "transform": "scale(1.1)",
+                                    "opacity": "0.8",
+                                },
+                                transition="all 0.2s ease",
+                            ),
+                            content="Export to Excel",
+                            side="bottom",
                         ),
-                        rx.button(
-                            rx.icon(tag="file_text", size=16),
-                            on_click=cast(rx.EventHandler[[]], State.export_pdf),
-                            variant="surface",
-                            size="2",
-                            cursor="pointer",
-                            aria_label="Export PDF",
-                            title="Export PDF",
+                        rx.tooltip(
+                            rx.image(
+                                src="/pdf_icon.svg",
+                                alt="Export PDF",
+                                width="22px",
+                                height="22px",
+                                cursor="pointer",
+                                on_click=cast(rx.EventHandler[[]], State.export_pdf),
+                                _hover={
+                                    "transform": "scale(1.1)",
+                                    "opacity": "0.8",
+                                },
+                                transition="all 0.2s ease",
+                            ),
+                            content="Export to PDF",
+                            side="bottom",
                         ),
-                        spacing="2",
+                        spacing="4",
+                        align_items="center",
+                        padding_right="0.5rem",
                     ),
                     width="100%",
                     padding="8px 8px 10px 8px",
@@ -116,6 +122,11 @@ def main_content() -> rx.Component:
                 rx.table.root(
                     rx.table.header(
                         rx.table.row(
+                            rx.table.column_header_cell(
+                                rx.text(""),
+                                aria_label="Row actions",
+                                style={"width": "56px", "min-width": "56px"},
+                            ),
                             table_header_cell("Company Name"),
                             table_header_cell("Sector"),
                             table_header_cell("Address"),
@@ -147,6 +158,7 @@ def main_content() -> rx.Component:
                     on_click=cast(rx.EventHandler[[]], State.add_row),
                     size="2",
                     cursor="pointer",
+                    disabled=State.is_processing,
                     background="#1E4E8C",
                     color="white",
                     _hover={"background": "#173F72"},
@@ -168,10 +180,9 @@ def main_content() -> rx.Component:
             ),
             align_items="start",
             width="100%",
-            max_width="1360px",
-            margin_x="auto",
             padding_x=["1rem", "1.5rem", "2rem"],
-            padding_y="1.05rem",
+            padding_top="50px",
+            padding_bottom="1.5rem",
             spacing="4",
         ),
         width="100%",
