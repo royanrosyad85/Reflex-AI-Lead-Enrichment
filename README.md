@@ -4,6 +4,7 @@ A web application built with Reflex that automates the process of enriching comp
 
 ## Live Preview
 Try the app here: https://zgti-ai-enrichment-x43jf.ondigitalocean.app/
+
 <img width="1877" height="844" alt="image" src="https://github.com/user-attachments/assets/2b555ef9-eb02-4f80-a532-a57fa504e6f8" />
 
 ## Features
