@@ -2,6 +2,10 @@
 
 A web application built with Reflex that automates the process of enriching company profiles using AI agents. This tool helps Zurich Group Technology Indonesia (ZGTI) gather comprehensive business information for lead generation and insurance sales opportunities.
 
+## Live Preview
+Try the app here: https://zgti-ai-enrichment-x43jf.ondigitalocean.app/
+<img width="1877" height="844" alt="image" src="https://github.com/user-attachments/assets/2b555ef9-eb02-4f80-a532-a57fa504e6f8" />
+
 ## Features
 
 - **Automated Lead Enrichment**: Input company names and automatically populate detailed profiles including sector, address, contact info, employee count, and more
